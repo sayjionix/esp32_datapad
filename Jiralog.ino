@@ -17,10 +17,10 @@ const char* base64Credentials = "cC5sYXVmZnNAYW1hemlsaWEuYWVybzpBVEFUVDN4RmZHRjA
 Preferences preferences;
 
 // HD44780 LCD Pin-Zuweisung: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
-LiquidCrystal lcd(22, 21, 19, 18, 5, 17); 
+LiquidCrystal lcd(9, 46, 8, 16, 15, 7); 
 
 // Pin für die Steuerung der Hintergrundbeleuchtung
-const int BACKLIGHT_PIN = 23; 
+const int BACKLIGHT_PIN = 4; 
 
 unsigned long lastActivityTime = 0;
 const unsigned long displayTimeout = 30000; 
@@ -36,8 +36,8 @@ char hexaKeys[ROWS][COLS] = {
   {'D','E','F','G'},
   {'H','I','J','K'} 
 };
-byte rowPins[ROWS] = {13, 12, 14, 27, 26}; 
-byte colPins[COLS] = {25, 33, 32, 4}; // Spalte 4 liegt jetzt auf GPIO 4
+byte rowPins[ROWS] = {40, 39, 45, 21, 14}; 
+byte colPins[COLS] = {41, 42, 2, 1};
 
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
