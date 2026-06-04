@@ -4,22 +4,20 @@
 #include <Keypad.h>
 #include <Preferences.h>
 #include <LiquidCrystal.h>
-#include <ArduinoJson.h> // WICHTIG: Bitte über den Bibliotheksverwalter installieren!
+#include <ArduinoJson.h>
 
-// WLAN Zugangsdaten
+// WLAN Configuration
 const char* ssid = "FRITZ!Box 7490";
 const char* password = "98865512128174437592";
 
-// Jira Konfiguration
+// Jira Configuration
 const char* jiraHost = "txteaviation.atlassian.net"; 
 const char* base64Credentials = "cC5sYXVmZnNAYW1hemlsaWEuYWVybzpBVEFUVDN4RmZHRjAxWVYzelhmSXJQcXRRQmVzWXFJOGRyeXNnTlo3X2JIVEthNGZhZnBPRUJwcXRMMmxXMm1MWHdFYkZObUpsaWZGWGpkRVJVbGNkV055TzZvLVk4QlhHMFJOcVk3T3A5a0JRVzc3RjBMeExGSjJZTzd4cHV3UHZ5ZlpYMzVhczVQVFJaN2xNNXhiMlFtZ0lvV0pSUkY5Y0UxY3I0cVZ4NmtxbzhMMTZJMzk3SDg9OUJEOTVFQjY"; 
 
 Preferences preferences;
 
-// HD44780 LCD Pin-Zuweisung: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
-LiquidCrystal lcd(9, 46, 8, 16, 15, 7); 
-
-// Pin für die Steuerung der Hintergrundbeleuchtung
+// HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
+LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 const int BACKLIGHT_PIN = 4; 
 
 unsigned long lastActivityTime = 0;
