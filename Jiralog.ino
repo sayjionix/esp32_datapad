@@ -3,7 +3,8 @@
 #include <WiFiClientSecure.h>
 #include <Keypad.h>
 #include <Preferences.h>
-#include <LiquidCrystal.h> // Standard-Bibliothek für HD44780
+#include <LiquidCrystal.h>
+#include <ArduinoJson.h> // WICHTIG: Bitte über den Bibliotheksverwalter installieren!
 
 // WLAN Zugangsdaten
 const char* ssid = "FRITZ!Box 7490";
@@ -21,12 +22,11 @@ LiquidCrystal lcd(22, 21, 19, 18, 5, 17);
 // Pin für die Steuerung der Hintergrundbeleuchtung
 const int BACKLIGHT_PIN = 23; 
 
-// Display-Timeout Variablen
 unsigned long lastActivityTime = 0;
-const unsigned long displayTimeout = 30000; // 30 Sekunden in ms
+const unsigned long displayTimeout = 30000; 
 bool isDisplayOn = true;
 
-// Keypad Definition (Pins angepasst, um Konflikte zu vermeiden)
+// Keypad Definition
 const byte ROWS = 5; 
 const byte COLS = 4; 
 char hexaKeys[ROWS][COLS] = {
@@ -41,7 +41,9 @@ byte colPins[COLS] = {25, 33, 32, 4}; // Spalte 4 liegt jetzt auf GPIO 4
 
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
+// Arrays für Keys und die Klarnamen (Summaries) im RAM
 String taskMapping[20];
+String taskNames[20];
 unsigned long startTimes[20] = {0};
 int activeTimerIndex = -1; 
 
@@ -72,11 +74,10 @@ int getT9LayoutIndex(char key) {
   return -1;
 }
 
-// Schaltet die Hintergrundbeleuchtung ein und reaktiviert die Anzeige
 void resetDisplayTimeout() {
   lastActivityTime = millis();
   if (!isDisplayOn) {
-    digitalWrite(BACKLIGHT_PIN, HIGH); // Licht an
+    digitalWrite(BACKLIGHT_PIN, HIGH); 
     isDisplayOn = true;
     updateDefaultDisplay(); 
   }
@@ -91,7 +92,13 @@ void updateDefaultDisplay() {
   
   lcd.setCursor(0, 2);
   if (activeTimerIndex != -1) {
-    lcd.print("Aktiv: " + taskMapping[activeTimerIndex]);
+    // Zeige den echten Namen an (gekürzt auf 20 Zeichen fürs Display)
+    String displayName = taskNames[activeTimerIndex];
+    if (displayName.length() == 0 || displayName == "Unbekannter Task") {
+      displayName = taskMapping[activeTimerIndex];
+    }
+    if (displayName.length() > 20) displayName = displayName.substring(0, 17) + "...";
+    lcd.print(displayName);
   } else {
     lcd.print("Status: Bereit.");
   }
@@ -100,22 +107,68 @@ void updateDefaultDisplay() {
   lcd.print("Klick=Start Hlt=Zeit");
 }
 
+// NEU: Ruft den Namen (Summary) des Tasks von Jira ab
+String fetchTaskSummary(String issueKey) {
+  if (WiFi.status() != WL_CONNECTED) return "Kein WLAN";
+  
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  
+  String url = "https://" + String(jiraHost) + "/rest/api/3/issue/" + issueKey + "?fields=summary";
+  http.begin(client, url);
+  http.addHeader("Authorization", "Basic " + String(base64Credentials));
+  http.addHeader("Accept", "application/json");
+  
+  int httpCode = http.GET();
+  String summary = "Unbekannter Task";
+  
+  if (httpCode == 200) {
+    String payload = http.getString();
+    
+    // JSON parsen (Größe des Dokuments für die nötigsten Felder reservieren)
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, payload);
+    
+    if (!error) {
+      if (doc["fields"]["summary"].is<const char*>()) {
+        summary = doc["fields"]["summary"].as<String>();
+      }
+    }
+  } else {
+    Serial.printf("Fehler beim Abrufen des Namens. HTTP Code: %d\n", httpCode);
+  }
+  
+  http.end();
+  return summary;
+}
+
 void setup() {
   Serial.begin(115200);
   
-  // Pin für Hintergrundbeleuchtung konfigurieren und einschalten
   pinMode(BACKLIGHT_PIN, OUTPUT);
   digitalWrite(BACKLIGHT_PIN, HIGH);
 
-  // LCD mit Dimensionen initialisieren (20 Spalten, 4 Zeilen)
   lcd.begin(20, 4);
+  
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("  Willkommen beim   ");
+  lcd.setCursor(0, 2);
+  lcd.print("  Jira Tracker v1   ");
+  delay(2000); 
+
+  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Booting System...");
 
+  // Preferences laden (Sowohl Key als auch Name)
   preferences.begin("jira_tasks", false);
   for (int i = 0; i < 20; i++) {
     String keyName = "task_" + String(i);
+    String titleName = "name_" + String(i);
     taskMapping[i] = preferences.getString(keyName.c_str(), "PROJ-" + String(i + 1));
+    taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
   }
 
   customKeypad.setHoldTime(2000); 
@@ -136,9 +189,8 @@ void loop() {
   // Automatische Display-Abschaltung nach 30 Sekunden Inaktivität
   if (isDisplayOn && (millis() - lastActivityTime > displayTimeout)) {
     lcd.clear();
-    digitalWrite(BACKLIGHT_PIN, LOW); // Hintergrundbeleuchtung aus
+    digitalWrite(BACKLIGHT_PIN, LOW); 
     isDisplayOn = false;
-    Serial.println("[Display] Gehe in den Energiesparmodus...");
   }
 
   // T9 Timeout für Buchstaben-Fixierung
@@ -276,10 +328,25 @@ void handleManualTimeInput(char key) {
 void handleT9Input(char key) {
   if (key == 'F') {
     if (currentInput.length() > 0) {
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Speichere Key...");
+      lcd.setCursor(0, 1); lcd.print(currentInput);
+      
+      // 1. Key im RAM und NVS sichern
       taskMapping[configIndex] = currentInput;
       String keyName = "task_" + String(configIndex);
       preferences.putString(keyName.c_str(), currentInput);
-      lcd.clear(); lcd.setCursor(0, 1); lcd.print("Gespeichert!");
+      
+      // 2. ERWEITERUNG: API-Abfrage für den echten Namen
+      lcd.setCursor(0, 2); lcd.print("Lade Jira-Namen...");
+      String fetchedName = fetchTaskSummary(currentInput);
+      
+      taskNames[configIndex] = fetchedName;
+      String titleName = "name_" + String(configIndex);
+      preferences.putString(titleName.c_str(), fetchedName);
+      
+      lcd.clear(); 
+      lcd.setCursor(0, 1); lcd.print("Erfolgreich!");
       delay(1500);
     }
     configIndex = -1;
