@@ -10,7 +10,8 @@ Preferences preferences;
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
-const int BACKLIGHT_PIN = 4; 
+const int BACKLIGHT_PIN = 4;
+
 // Dynamische Variablen für Zugangsdaten (werden aus Preferences geladen)
 String ssid = "";
 String password = "";
@@ -22,17 +23,16 @@ const unsigned long displayTimeout = 30000;
 bool isDisplayOn = true;
 
 // Keypad Definition
-const byte ROWS = 5; 
-const byte COLS = 4; 
+const byte ROWS = 4; 
+const byte COLS = 5; 
 char hexaKeys[ROWS][COLS] = {
-  {'1','2','3','4'},
-  {'5','6','7','8'},
-  {'9','A','B','C'},
-  {'D','E','F','G'},
-  {'H','I','J','K'} 
+  {'4','8','B','F','K'},
+  {'3','7','A','E','I'},
+  {'2','6','0','D','H'},
+  {'1','5','9','C','G'}
 };
-byte rowPins[ROWS] = {40, 39, 45, 21, 14}; 
-byte colPins[COLS] = {41, 42, 2, 1};
+byte rowPins[ROWS] = {41, 42, 2, 1}; 
+byte colPins[COLS] = {40, 39, 45, 21, 14};
 
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
@@ -148,10 +148,10 @@ void runSerialSetup() {
 
   Serial.println("\n--> Alle Zugangsdaten erfolgreich gespeichert! Starte System neu...");
   lcd.clear();
-  lcd.setCursor(0, 1); lcd.print("Daten gespeichert!");
-  lcd.setCursor(0, 2); lcd.print("Starte System neu...");
+  lcd.setCursor(0, 1); lcd.print("Data saved!");
+  lcd.setCursor(0, 2); lcd.print("Restarting system...");
   delay(2000);
-  ESP.restart(); // ESP32 neu starten, damit er mit den neuen Daten bootet
+  ESP.restart();
 }
 
 String fetchTaskSummary(String issueKey) {
@@ -189,9 +189,7 @@ void setup() {
   lcd.begin(20, 4);
   
   lcd.clear();
-  lcd.setCursor(0, 1); lcd.print("  Willkommen beim   ");
-  lcd.setCursor(0, 2); lcd.print("  Jira Tracker v1   ");
-  delay(2000); 
+  lcd.setCursor(0, 0); lcd.print("Booting System...");
 
   // Preferences öffnen (Namespace "jira_tasks")
   preferences.begin("jira_tasks", false);
@@ -237,10 +235,7 @@ void setup() {
 
   customKeypad.setHoldTime(2000); 
 
-  lcd.clear();
-  lcd.setCursor(0, 0); lcd.print("Booting System...");
-  lcd.setCursor(0, 1); lcd.print("WLAN verbinden...   ");
-  
+  lcd.setCursor(0, 1); lcd.print("Connecting to WLAN..");
   WiFi.begin(ssid.c_str(), password.c_str());
   
   // Timeout für WLAN einbauen (falls falsche Daten eingegeben wurden)
