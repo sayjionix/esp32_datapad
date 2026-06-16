@@ -6,19 +6,16 @@
 #include <LiquidCrystal.h>
 #include <ArduinoJson.h>
 
-// WLAN Configuration
-const char* ssid = "FRITZ!Box 7490";
-const char* password = "98865512128174437592";
-
-// Jira Configuration
-const char* jiraHost = "txteaviation.atlassian.net"; 
-const char* base64Credentials = "cC5sYXVmZnNAYW1hemlsaWEuYWVybzpBVEFUVDN4RmZHRjAxWVYzelhmSXJQcXRRQmVzWXFJOGRyeXNnTlo3X2JIVEthNGZhZnBPRUJwcXRMMmxXMm1MWHdFYkZObUpsaWZGWGpkRVJVbGNkV055TzZvLVk4QlhHMFJOcVk3T3A5a0JRVzc3RjBMeExGSjJZTzd4cHV3UHZ5ZlpYMzVhczVQVFJaN2xNNXhiMlFtZ0lvV0pSUkY5Y0UxY3I0cVZ4NmtxbzhMMTZJMzk3SDg9OUJEOTVFQjY"; 
-
 Preferences preferences;
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 const int BACKLIGHT_PIN = 4; 
+// Dynamische Variablen für Zugangsdaten (werden aus Preferences geladen)
+String ssid = "";
+String password = "";
+String jiraHost = ""; 
+String base64Credentials = ""; 
 
 unsigned long lastActivityTime = 0;
 const unsigned long displayTimeout = 30000; 
@@ -105,17 +102,67 @@ void updateDefaultDisplay() {
   lcd.print("Klick=Start Hlt=Zeit");
 }
 
-// NEU: Ruft den Namen (Summary) des Tasks von Jira ab
+// Liest einen String über die serielle Schnittstelle ein (blockierend fürs Setup)
+String readSerialLine() {
+  while (!Serial.available()) {
+    delay(50);
+  }
+  String input = Serial.readStringUntil('\n');
+  input.trim(); // Zeilenumbrüche und Leerzeichen am Ende entfernen
+  return input;
+}
+
+// Führt den Benutzer durch die Ersteinrichtung im Seriellen Monitor
+void runSerialSetup() {
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("!!! SETUP MODUS !!!");
+  lcd.setCursor(0, 1); lcd.print("Bitte den Seriellen");
+  lcd.setCursor(0, 2); lcd.print("Monitor am PC oeff-");
+  lcd.setCursor(0, 3); lcd.print("nen (115200 Baud).");
+
+  Serial.println("\n==================================================");
+  Serial.println("         ERSTEINRICHTUNG JIRA TRACKER             ");
+  Serial.println("==================================================");
+  
+  Serial.print("1. Bitte WLAN Name (SSID) eingeben: ");
+  ssid = readSerialLine();
+  Serial.println(ssid);
+
+  Serial.print("2. Bitte WLAN Passwort eingeben: ");
+  password = readSerialLine();
+  Serial.println("********");
+
+  Serial.print("3. Bitte Jira-Host eingeben (z.B. deine-firma.atlassian.net): ");
+  jiraHost = readSerialLine();
+  Serial.println(jiraHost);
+
+  Serial.print("4. Bitte Base64 Credentials eingeben: ");
+  base64Credentials = readSerialLine();
+  Serial.println("[GESPEICHERT]");
+
+  // In Preferences permanent sichern
+  preferences.putString("wifi_ssid", ssid);
+  preferences.putString("wifi_pass", password);
+  preferences.putString("jira_host", jiraHost);
+  preferences.putString("jira_cred", base64Credentials);
+
+  Serial.println("\n--> Alle Zugangsdaten erfolgreich gespeichert! Starte System neu...");
+  lcd.clear();
+  lcd.setCursor(0, 1); lcd.print("Daten gespeichert!");
+  lcd.setCursor(0, 2); lcd.print("Starte System neu...");
+  delay(2000);
+  ESP.restart(); // ESP32 neu starten, damit er mit den neuen Daten bootet
+}
+
 String fetchTaskSummary(String issueKey) {
   if (WiFi.status() != WL_CONNECTED) return "Kein WLAN";
-  
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
   
-  String url = "https://" + String(jiraHost) + "/rest/api/3/issue/" + issueKey + "?fields=summary";
+  String url = "https://" + jiraHost + "/rest/api/3/issue/" + issueKey + "?fields=summary";
   http.begin(client, url);
-  http.addHeader("Authorization", "Basic " + String(base64Credentials));
+  http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Accept", "application/json");
   
   int httpCode = http.GET();
@@ -123,20 +170,12 @@ String fetchTaskSummary(String issueKey) {
   
   if (httpCode == 200) {
     String payload = http.getString();
-    
-    // JSON parsen (Größe des Dokuments für die nötigsten Felder reservieren)
     DynamicJsonDocument doc(2048);
     DeserializationError error = deserializeJson(doc, payload);
-    
-    if (!error) {
-      if (doc["fields"]["summary"].is<const char*>()) {
-        summary = doc["fields"]["summary"].as<String>();
-      }
+    if (!error && doc["fields"]["summary"].is<const char*>()) {
+      summary = doc["fields"]["summary"].as<String>();
     }
-  } else {
-    Serial.printf("Fehler beim Abrufen des Namens. HTTP Code: %d\n", httpCode);
   }
-  
   http.end();
   return summary;
 }
@@ -150,18 +189,45 @@ void setup() {
   lcd.begin(20, 4);
   
   lcd.clear();
-  lcd.setCursor(0, 1);
-  lcd.print("  Willkommen beim   ");
-  lcd.setCursor(0, 2);
-  lcd.print("  Jira Tracker v1   ");
+  lcd.setCursor(0, 1); lcd.print("  Willkommen beim   ");
+  lcd.setCursor(0, 2); lcd.print("  Jira Tracker v1   ");
   delay(2000); 
 
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Booting System...");
-
-  // Preferences laden (Sowohl Key als auch Name)
+  // Preferences öffnen (Namespace "jira_tasks")
   preferences.begin("jira_tasks", false);
+
+  // --- HARDWARE CONFIG RESET PRÜFUNG ---
+  // Wir lesen die Tastmatrix direkt aus. Wenn beim Starten 'K' und 'D' gehalten werden -> Reset!
+  customKeypad.getKeys(); // Tastenstatus aktualisieren
+  bool resetPressed = false;
+  
+  // Prüfen ob K und D aktiv sind
+  bool hasK = false, hasD = false;
+  for (int i=0; i<LIST_MAX; i++) {
+    if (customKeypad.key[i].kchar == 'K' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasK = true;
+    if (customKeypad.key[i].kchar == 'D' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasD = true;
+  }
+  
+  if (hasK && hasD) {
+    Serial.println("\n[RESET] K und D beim Start erkannt. Loesche Zugangsdaten...");
+    preferences.remove("wifi_ssid");
+    preferences.remove("wifi_pass");
+    preferences.remove("jira_host");
+    preferences.remove("jira_cred");
+  }
+
+  // Zugangsdaten aus dem Speicher laden
+  ssid = preferences.getString("wifi_ssid", "");
+  password = preferences.getString("wifi_pass", "");
+  jiraHost = preferences.getString("jira_host", "");
+  base64Credentials = preferences.getString("jira_cred", "");
+
+  // Falls unvollständig, erzwinge das serielle Setup
+  if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
+    runSerialSetup();
+  }
+
+  // Task-Mappings (Tasten 1-20) laden
   for (int i = 0; i < 20; i++) {
     String keyName = "task_" + String(i);
     String titleName = "name_" + String(i);
@@ -171,10 +237,26 @@ void setup() {
 
   customKeypad.setHoldTime(2000); 
 
-  lcd.setCursor(0, 1);
-  lcd.print("WLAN verbinden...   ");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("Booting System...");
+  lcd.setCursor(0, 1); lcd.print("WLAN verbinden...   ");
+  
+  WiFi.begin(ssid.c_str(), password.c_str());
+  
+  // Timeout für WLAN einbauen (falls falsche Daten eingegeben wurden)
+  int wifiTimeoutCounter = 0;
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+    wifiTimeoutCounter++;
+    if (wifiTimeoutCounter > 30) { // Nach 15 Sekunden Fehlermeldung und Setup erzwingen
+      Serial.println("\nWLAN Verbindung fehlgeschlagen! Starte Setup...");
+      preferences.remove("wifi_ssid"); // SSID löschen damit er beim nächsten Boot ins Setup springt
+      lcd.clear(); lcd.setCursor(0, 1); lcd.print("WLAN Fehler!");
+      delay(2000);
+      ESP.restart();
+    }
+  }
   
   resetDisplayTimeout();
   updateDefaultDisplay();
@@ -221,20 +303,16 @@ void loop() {
     } 
     else {
       // COMBO: T9 Setup starten
-      if (isShiftPressed && key != 'K' && kpadState == PRESSED && idx != -1) {
+      if (isShiftPressed && key != 'K' && key != 'D' && kpadState == PRESSED && idx != -1) {
         configIndex = idx;
         currentInput = "";
         lastT9Key = '\0';
         
         lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("!!! T9-SETUP !!!");
-        lcd.setCursor(0, 1);
-        lcd.print("Taste " + String(key) + " -> Jira Key");
-        lcd.setCursor(0, 2);
-        lcd.print("Eingabe: ");
-        lcd.setCursor(0, 3);
-        lcd.print("D=Del F=Save");
+        lcd.setCursor(0, 0); lcd.print("!!! T9-SETUP !!!");
+        lcd.setCursor(0, 1); lcd.print("Taste " + String(key) + " -> Jira Key");
+        lcd.setCursor(0, 2); lcd.print("Eingabe: ");
+        lcd.setCursor(0, 3); lcd.print("D=Del F=Save");
       } 
       // NORMALER KLICK: Start / Stopp
       else if (!isShiftPressed && kpadState == PRESSED && idx != -1 && key != 'K') {
@@ -255,14 +333,10 @@ void loop() {
           currentInput = "";
           
           lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print("MANUELLE ZEIT FUER:");
-          lcd.setCursor(0, 1);
-          lcd.print(taskMapping[manualTimeIndex]);
-          lcd.setCursor(0, 2);
-          lcd.print("Minuten: ");
-          lcd.setCursor(0, 3);
-          lcd.print("D=Del F=Buchen");
+          lcd.setCursor(0, 0); lcd.print("MANUELLE ZEIT FUER:");
+          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
+          lcd.setCursor(0, 2); lcd.print("Minuten: ");
+          lcd.setCursor(0, 3); lcd.print("D=Del F=Buchen");
         }
       }
     }
@@ -283,7 +357,6 @@ void loop() {
       lcd.print(timeBuf);
     }
   }
-
   delay(10);
 }
 
@@ -385,8 +458,8 @@ void handleTracking(int index) {
     if (durationMinutes == 0) durationMinutes = 1;
     
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("Stoppe & buche:");
-    lcd.setCursor(0, 1); lcd.print(taskMapping[index] + " (" + String(durationMinutes) + "m)");
+    lcd.setCursor(0, 0); lcd.print("Buche Task:");
+    lcd.setCursor(0, 1); lcd.print(taskMapping[index]);
     
     if (WiFi.status() == WL_CONNECTED) {
       logTimeToJira(taskMapping[index].c_str(), durationMinutes);
@@ -421,16 +494,13 @@ void handleTracking(int index) {
 
 void logTimeToJira(const char* issueKey, unsigned long minutes) {
   WiFiClientSecure client; client.setInsecure(); HTTPClient http;
-  String url = "https://" + String(jiraHost) + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
+  String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
   http.begin(client, url);
-  http.addHeader("Authorization", "Basic " + String(base64Credentials));
+  http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
 
-  String jsonPayload = "{\"timeSpent\": \"";
-  jsonPayload += String(minutes);
-  jsonPayload += "m\", \"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Gebucht via ESP32 HD44780 Station.\", \"type\": \"text\"}]}]}}";
-  
+  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", \"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Gebucht via ESP32 HD44780 Station.\", \"type\": \"text\"}]}]}}";
   int httpResponseCode = http.POST(jsonPayload);
   
   lcd.setCursor(0, 2);
