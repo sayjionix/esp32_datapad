@@ -12,7 +12,7 @@ Preferences preferences;
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 const int BACKLIGHT_PIN = 4;
 
-// WLAN and Jira configuration variables
+// WiFi and Jira configuration variables
 String ssid = "";
 String password = "";
 String jiraHost = ""; 
@@ -26,13 +26,19 @@ bool isDisplayOn = true;
 const byte ROWS = 4; 
 const byte COLS = 5; 
 char hexaKeys[ROWS][COLS] = {
-  {'1','5','9','C','G'},
-  {'2','6','0','D','H'},
-  {'3','7','A','E','I'},
-  {'4','8','B','F','K'}
+  {'S','7','4','1','0'},
+  {'A','8','5','2','G'},
+  {'B','9','6','3','H'},
+  {'C','D','E','F','I'}
 };
 byte rowPins[ROWS] = {41, 42, 2, 1}; 
 byte colPins[COLS] = {40, 39, 45, 21, 14};
+int keyTaskMap[ROWS][COLS] = {
+  {-1,0,4,8,12},
+  {-1,1,5,9,13},
+  {-1,2,6,10,14},
+  {-1,3,7,11,15}
+};
 
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
@@ -54,21 +60,39 @@ const String t9Chars[11] = {
   "1", "ABC2", "DEF3", "GHI4", "JKL5", "MNO6", "PQRS7", "TUV8", "WXYZ9", "0 ", "-"
 };
 
-int getKeyIndex(char key) {
-  if (key >= '1' && key <= '9') return key - '1';
-  if (key >= 'A' && key <= 'G') return 9 + (key - 'A');
-  if (key >= 'H' && key <= 'K') return 16 + (key - 'H');
+void resetDisplayTimeout();
+void updateDefaultDisplay();
+String readSerialLine();
+void runSerialSetup();
+String fetchTaskSummary(String issueKey);
+void handleManualTimeInput(char key);
+void handleT9Input(char key);
+void handleTracking(int index);
+void logTimeToJira(const char* issueKey, unsigned long minutes);
+
+// Return the index of the keypad's key-to-task mapping
+int getKeyIndex(char key)
+{
+  for (int i = 0; i < ROWS; i++) {
+    for (int j = 0; j < COLS; j++) {
+      if (hexaKeys[i][j] == key) {
+        return keyTaskMap[i][j];
+      }
+    }
+  }
   return -1;
 }
 
-int getT9LayoutIndex(char key) {
+int getT9LayoutIndex(char key)
+{
   if (key >= '1' && key <= '9') return key - '1';
   if (key == 'A') return 9;
   if (key == 'B') return 10;
   return -1;
 }
 
-void resetDisplayTimeout() {
+void resetDisplayTimeout()
+{
   lastActivityTime = millis();
   if (!isDisplayOn) {
     digitalWrite(BACKLIGHT_PIN, HIGH); 
@@ -111,7 +135,8 @@ String readSerialLine() {
   return input;
 }
 
-void runSerialSetup() {
+void runSerialSetup()
+{
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("---- SETUP MODE ----");
   lcd.setCursor(0, 1); lcd.print("Please connect via  ");
@@ -122,11 +147,11 @@ void runSerialSetup() {
   Serial.println("        CONFIGURATION OF TIME TRACKER             ");
   Serial.println("==================================================");
   
-  Serial.print("1. Please enter WLAN Name (SSID): ");
+  Serial.print("1. Please enter WiFi Name (SSID): ");
   ssid = readSerialLine();
   Serial.println(ssid);
 
-  Serial.print("2. Please enter WLAN Password: ");
+  Serial.print("2. Please enter WiFi Password: ");
   password = readSerialLine();
   Serial.println("********");
 
@@ -152,8 +177,9 @@ void runSerialSetup() {
   ESP.restart();
 }
 
-String fetchTaskSummary(String issueKey) {
-  if (WiFi.status() != WL_CONNECTED) return "Kein WLAN";
+String fetchTaskSummary(String issueKey)
+{
+  if (WiFi.status() != WL_CONNECTED) return "No WiFi!";
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -164,7 +190,7 @@ String fetchTaskSummary(String issueKey) {
   http.addHeader("Accept", "application/json");
   
   int httpCode = http.GET();
-  String summary = "Unbekannter Task";
+  String summary = "Unknown Task";
   
   if (httpCode == 200) {
     String payload = http.getString();
@@ -178,194 +204,20 @@ String fetchTaskSummary(String issueKey) {
   return summary;
 }
 
-void setup() {
-  Serial.begin(115200);
-  
-  pinMode(BACKLIGHT_PIN, OUTPUT);
-  digitalWrite(BACKLIGHT_PIN, HIGH);
-
-  lcd.begin(20, 4);
-  
-  lcd.clear();
-  lcd.setCursor(0, 0); lcd.print("Booting System...");
-
-  // Preferences öffnen (Namespace "jira_tasks")
-  preferences.begin("jira_tasks", false);
-
-  // --- HARDWARE CONFIG RESET PRÜFUNG ---
-  // Wir lesen die Tastmatrix direkt aus. Wenn beim Starten 'K' und 'D' gehalten werden -> Reset!
-  customKeypad.getKeys(); // Tastenstatus aktualisieren
-  bool resetPressed = false;
-  
-  // Prüfen ob K und D aktiv sind
-  bool hasK = false, hasD = false;
-  for (int i=0; i<LIST_MAX; i++) {
-    if (customKeypad.key[i].kchar == 'K' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasK = true;
-    if (customKeypad.key[i].kchar == 'D' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasD = true;
-  }
-  
-  if (hasK && hasD) {
-    Serial.println("\n[RESET] K und D beim Start erkannt. Loesche Zugangsdaten...");
-    preferences.remove("wifi_ssid");
-    preferences.remove("wifi_pass");
-    preferences.remove("jira_host");
-    preferences.remove("jira_cred");
-  }
-
-  // Zugangsdaten aus dem Speicher laden
-  ssid = preferences.getString("wifi_ssid", "");
-  password = preferences.getString("wifi_pass", "");
-  jiraHost = preferences.getString("jira_host", "");
-  base64Credentials = preferences.getString("jira_cred", "");
-
-  // Falls unvollständig, erzwinge das serielle Setup
-  if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
-    runSerialSetup();
-  }
-
-  // Task-Mappings (Tasten 1-20) laden
-  for (int i = 0; i < 20; i++) {
-    String keyName = "task_" + String(i);
-    String titleName = "name_" + String(i);
-    taskMapping[i] = preferences.getString(keyName.c_str(), "PROJ-" + String(i + 1));
-    taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
-  }
-
-  customKeypad.setHoldTime(2000);
-  customKeypad.setDebounceTime(10);
-
-  lcd.setCursor(0, 1); lcd.print("Connecting to WLAN..");
-  WiFi.begin(ssid.c_str(), password.c_str());
-  
-  // Timeout für WLAN einbauen (falls falsche Daten eingegeben wurden)
-  int wifiTimeoutCounter = 0;
-  while (WiFi.status() != WL_CONNECTED) { 
-    delay(500); 
-    Serial.print("."); 
-    wifiTimeoutCounter++;
-    if (wifiTimeoutCounter > 30) { // Nach 15 Sekunden Fehlermeldung und Setup erzwingen
-      Serial.println("\nWLAN Verbindung fehlgeschlagen! Starte Setup...");
-      preferences.remove("wifi_ssid"); // SSID löschen damit er beim nächsten Boot ins Setup springt
-      lcd.clear(); lcd.setCursor(0, 1); lcd.print("WLAN Fehler!");
-      delay(2000);
-      ESP.restart();
-    }
-  }
-  
-  resetDisplayTimeout();
-  updateDefaultDisplay();
-}
-
-void loop() {
-  char key = customKeypad.getKey();
-  KeyState kpadState = customKeypad.getState();
-
-  // Automatic display timeout
-  if (isDisplayOn && (millis() - lastActivityTime > displayTimeout)) {
-    lcd.clear();
-    digitalWrite(BACKLIGHT_PIN, LOW); 
-    isDisplayOn = false;
-  }
-
-  // T9 Timeout für Buchstaben-Fixierung
-  if (configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
-    lastT9Key = '\0'; 
-    lcd.setCursor(9, 2);
-    lcd.print(currentInput + " ");
-  }
-
-  // Prüfen ob 'K' gedrückt ist (Shift)
-  bool isShiftPressed = false;
-  for (int i = 0; i < ROWS; i++) {
-    for (int j = 0; j < COLS; j++) {
-      if (customKeypad.key[i].kchar == 'K' && 
-         (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) {
-        isShiftPressed = true;
-      }
-    }
-  }
-
-  if (key) {
-    resetDisplayTimeout(); 
-    int idx = getKeyIndex(key);
-
-    if (configIndex != -1) {
-      handleT9Input(key);
-    } 
-    else if (manualTimeIndex != -1) {
-      handleManualTimeInput(key);
-    } 
-    else {
-      // COMBO: T9 Setup starten
-      if (isShiftPressed && key != 'K' && key != 'D' && kpadState == PRESSED && idx != -1) {
-        configIndex = idx;
-        currentInput = "";
-        lastT9Key = '\0';
-        
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("!!! T9-SETUP !!!");
-        lcd.setCursor(0, 1); lcd.print("Taste " + String(key) + " -> Jira Key");
-        lcd.setCursor(0, 2); lcd.print("Eingabe: ");
-        lcd.setCursor(0, 3); lcd.print("D=Del F=Save");
-      } 
-      // NORMALER KLICK: Start / Stopp
-      else if (!isShiftPressed && kpadState == PRESSED && idx != -1 && key != 'K') {
-        handleTracking(idx);
-      }
-    }
-  }
-
-  // LANGE HALTEN: Direkte Zeiteingabe
-  if (kpadState == HOLD && configIndex == -1 && manualTimeIndex == -1) {
-    for (int i = 0; i < ROWS; i++) {
-      if (customKeypad.key[i].kstate == HOLD) {
-        char heldKey = customKeypad.key[i].kchar;
-        int idx = getKeyIndex(heldKey);
-        if (idx != -1 && heldKey != 'K' && heldKey != 'D' && heldKey != 'F') {
-          resetDisplayTimeout();
-          manualTimeIndex = idx;
-          currentInput = "";
-          
-          lcd.clear();
-          lcd.setCursor(0, 0); lcd.print("MANUELLE ZEIT FUER:");
-          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
-          lcd.setCursor(0, 2); lcd.print("Minuten: ");
-          lcd.setCursor(0, 3); lcd.print("D=Del F=Buchen");
-        }
-      }
-    }
-  }
-
-  // Sekunden-Update bei laufendem Timer
-  if (isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1) {
-    static unsigned long lastSecUpdate = 0;
-    if (millis() - lastSecUpdate > 1000) {
-      lastSecUpdate = millis();
-      unsigned long totalSecs = (millis() - startTimes[activeTimerIndex]) / 1000;
-      unsigned long mins = totalSecs / 60;
-      unsigned long secs = totalSecs % 60;
-      
-      lcd.setCursor(0, 3);
-      char timeBuf[21];
-      sprintf(timeBuf, "Laufzeit: %02lu:%02lu      ", mins, secs);
-      lcd.print(timeBuf);
-    }
-  }
-  delay(10);
-}
-
-void handleManualTimeInput(char key) {
-  if (key == 'F') {
+void handleManualTimeInput(char key)
+{
+  if (key == 'C') // Confirm
+  {
     lcd.clear();
     if (currentInput.length() > 0) {
       long minutes = currentInput.toInt();
       if (minutes > 0) {
-        lcd.setCursor(0, 0); lcd.print("Sende an Jira...");
+        lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
         lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex] + ": " + String(minutes) + "m");
         if (WiFi.status() == WL_CONNECTED) {
           logTimeToJira(taskMapping[manualTimeIndex].c_str(), minutes);
         } else {
-          lcd.setCursor(0, 2); lcd.print("WLAN FEHLER!");
+          lcd.setCursor(0, 2); lcd.print("WiFi Error!");
           delay(2000);
         }
       }
@@ -375,16 +227,21 @@ void handleManualTimeInput(char key) {
     return;
   }
 
-  if (key == 'D') {
+  if (key == 'B') // Delete last character / Cancel
+  {
     if (currentInput.length() > 0) {
       currentInput.remove(currentInput.length() - 1);
       lcd.setCursor(9, 2); lcd.print(currentInput + "    ");
     }
+    else {
+      manualTimeIndex = -1;
+      updateDefaultDisplay();
+    }
     return;
   }
 
-  if ((key >= '1' && key <= '9') || key == 'A') {
-    char digit = (key == 'A') ? '0' : key;
+  if ((key >= '1' && key <= '9') || key == '0') {
+    char digit = (key == '0') ? '0' : key;
     currentInput += digit;
     lcd.setCursor(9, 2); lcd.print(currentInput);
   }
@@ -458,7 +315,7 @@ void handleTracking(int index) {
     if (WiFi.status() == WL_CONNECTED) {
       logTimeToJira(taskMapping[index].c_str(), durationMinutes);
     } else {
-      lcd.setCursor(0, 2); lcd.print("WLAN FEHLER!");
+      lcd.setCursor(0, 2); lcd.print("WiFi Error!");
       delay(2000);
     }
     startTimes[index] = 0;
@@ -486,7 +343,8 @@ void handleTracking(int index) {
   }
 }
 
-void logTimeToJira(const char* issueKey, unsigned long minutes) {
+void logTimeToJira(const char* issueKey, unsigned long minutes)
+{
   WiFiClientSecure client; client.setInsecure(); HTTPClient http;
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
   http.begin(client, url);
@@ -494,7 +352,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes) {
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
 
-  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", \"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Gebucht via ESP32 HD44780 Station.\", \"type\": \"text\"}]}]}}";
+  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", \"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
   int httpResponseCode = http.POST(jsonPayload);
   
   lcd.setCursor(0, 2);
@@ -505,4 +363,177 @@ void logTimeToJira(const char* issueKey, unsigned long minutes) {
   }
   delay(1500); 
   http.end();
+}
+
+void setup()
+{
+  pinMode(BACKLIGHT_PIN, OUTPUT);
+  digitalWrite(BACKLIGHT_PIN, HIGH);
+
+  lcd.begin(20, 4);
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("Datapad booting...");
+
+  Serial.begin(115200);
+  delay(2000); // Wait for USB-Serial controller to initialize after a power-cycle
+
+  preferences.begin("jira_tasks", false);
+
+  // Check for simultaneous press of S and A to reset configuration
+  customKeypad.getKeys();
+  bool hasS = false, hasA = false;
+  for (int i=0; i<LIST_MAX; i++) {
+    if (customKeypad.key[i].kchar == 'S' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasS = true;
+    if (customKeypad.key[i].kchar == 'A' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasA = true;
+  }
+  if (hasS && hasA) {
+    runSerialSetup();
+  }
+
+  // Load WiFi and Jira access data from EEPROM
+  ssid = preferences.getString("wifi_ssid", "");
+  password = preferences.getString("wifi_pass", "");
+  jiraHost = preferences.getString("jira_host", "");
+  base64Credentials = preferences.getString("jira_cred", "");
+
+  // Enter serial Setup Mode if any of the preferences could not be loaded
+  if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
+    runSerialSetup();
+  }
+
+  // Load Task-Mappings
+  for (int i = 0; i < 20; i++) {
+    String keyName = "task_" + String(i);
+    String titleName = "name_" + String(i);
+    taskMapping[i] = preferences.getString(keyName.c_str(), "PROJ-" + String(i + 1));
+    taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
+  }
+
+  customKeypad.setHoldTime(2000);
+  customKeypad.setDebounceTime(10);
+
+  // Connect to WiFi
+  lcd.setCursor(0, 1); lcd.print("Connecting to WiFi..");
+  WiFi.begin(ssid.c_str(), password.c_str());
+  
+  // WiFi Timeout
+  int wifiTimeoutCounter = 0;
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+    wifiTimeoutCounter++;
+    if (wifiTimeoutCounter > 30) { // Print error message after 15s and restart
+      Serial.println("\nError establishing WiFi connection! Restarting...");
+      lcd.clear(); lcd.setCursor(0, 1); lcd.print("WiFi Error!");
+      delay(3000);
+      ESP.restart();
+    }
+  }
+  
+  resetDisplayTimeout();
+  updateDefaultDisplay();
+}
+
+void loop()
+{
+  char key = customKeypad.getKey();
+  KeyState kpadState = customKeypad.getState();
+
+  // Automatic display timeout
+  if (isDisplayOn && (millis() - lastActivityTime > displayTimeout)) {
+    lcd.clear();
+    digitalWrite(BACKLIGHT_PIN, LOW); 
+    isDisplayOn = false;
+  }
+  // Turn on display on keypress
+  if (!isDisplayOn && key) {
+    resetDisplayTimeout();
+    return;
+  }
+
+  // T9 Timeout für Buchstaben-Fixierung
+  if (configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
+    lastT9Key = '\0'; 
+    lcd.setCursor(9, 2);
+    lcd.print(currentInput + " ");
+  }
+
+  // Check for 'S' (Shift) key being pressed
+  bool isShiftPressed = false;
+  for (int i = 0; i < ROWS; i++) {
+    for (int j = 0; j < COLS; j++) {
+      if (customKeypad.key[i].kchar == 'S' && 
+         (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) {
+        isShiftPressed = true;
+      }
+    }
+  }
+
+  if (key) {
+    resetDisplayTimeout(); 
+    int idx = getKeyIndex(key);
+
+    if (configIndex != -1) {
+      handleT9Input(key);
+    } 
+    else if (manualTimeIndex != -1) {
+      handleManualTimeInput(key);
+    } 
+    else {
+      // COMBO: T9 Setup starten
+      if (isShiftPressed && key != 'K' && key != 'D' && kpadState == PRESSED && idx != -1) {
+        configIndex = idx;
+        currentInput = "";
+        lastT9Key = '\0';
+        
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("!!! T9-SETUP !!!");
+        lcd.setCursor(0, 1); lcd.print("Taste " + String(key) + " -> Jira Key");
+        lcd.setCursor(0, 2); lcd.print("Eingabe: ");
+        lcd.setCursor(0, 3); lcd.print("D=Del F=Save");
+      } 
+      // NORMALER KLICK: Start / Stopp
+      else if (!isShiftPressed && kpadState == PRESSED && idx != -1 && key != 'K') {
+        handleTracking(idx);
+      }
+    }
+  }
+
+  // Long press: direct time entry
+  if (kpadState == HOLD && configIndex == -1 && manualTimeIndex == -1) {
+    for (int i = 0; i < ROWS; i++) {
+      if (customKeypad.key[i].kstate == HOLD) {
+        char heldKey = customKeypad.key[i].kchar;
+        int idx = getKeyIndex(heldKey);
+        if (idx != -1 && heldKey != 'S' && heldKey != 'A' && heldKey != 'B' && heldKey != 'C') {
+          resetDisplayTimeout();
+          manualTimeIndex = idx;
+          currentInput = "";
+          
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Manual entry for:");
+          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
+          lcd.setCursor(0, 2); lcd.print("Minutes: ");
+          lcd.setCursor(0, 3); lcd.print("Enter=Book");
+        }
+      }
+    }
+  }
+
+  // Update seconds in case of running timer
+  if (isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1) {
+    static unsigned long lastSecUpdate = 0;
+    if (millis() - lastSecUpdate > 1000) {
+      lastSecUpdate = millis();
+      unsigned long totalSecs = (millis() - startTimes[activeTimerIndex]) / 1000;
+      unsigned long mins = totalSecs / 60;
+      unsigned long secs = totalSecs % 60;
+      
+      lcd.setCursor(0, 3);
+      char timeBuf[21];
+      sprintf(timeBuf, "Running: %02lu:%02lu      ", mins, secs);
+      lcd.print(timeBuf);
+    }
+  }
+  delay(10);
 }
