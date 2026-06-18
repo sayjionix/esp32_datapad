@@ -12,31 +12,30 @@ Preferences preferences;
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 const int BACKLIGHT_PIN = 4;
 
-// Dynamische Variablen für Zugangsdaten (werden aus Preferences geladen)
+// WLAN and Jira configuration variables
 String ssid = "";
 String password = "";
 String jiraHost = ""; 
 String base64Credentials = ""; 
 
 unsigned long lastActivityTime = 0;
-const unsigned long displayTimeout = 30000; 
+const unsigned long displayTimeout = 60000; 
 bool isDisplayOn = true;
 
-// Keypad Definition
+// Keypad Definition (rows and cols are inverted here to match anti-ghosting diode polarity with library code)
 const byte ROWS = 4; 
 const byte COLS = 5; 
 char hexaKeys[ROWS][COLS] = {
-  {'4','8','B','F','K'},
-  {'3','7','A','E','I'},
+  {'1','5','9','C','G'},
   {'2','6','0','D','H'},
-  {'1','5','9','C','G'}
+  {'3','7','A','E','I'},
+  {'4','8','B','F','K'}
 };
 byte rowPins[ROWS] = {41, 42, 2, 1}; 
 byte colPins[COLS] = {40, 39, 45, 21, 14};
 
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
-// Arrays für Keys und die Klarnamen (Summaries) im RAM
 String taskMapping[20];
 String taskNames[20];
 unsigned long startTimes[20] = {0};
@@ -112,41 +111,40 @@ String readSerialLine() {
   return input;
 }
 
-// Führt den Benutzer durch die Ersteinrichtung im Seriellen Monitor
 void runSerialSetup() {
   lcd.clear();
-  lcd.setCursor(0, 0); lcd.print("!!! SETUP MODUS !!!");
-  lcd.setCursor(0, 1); lcd.print("Bitte den Seriellen");
-  lcd.setCursor(0, 2); lcd.print("Monitor am PC oeff-");
-  lcd.setCursor(0, 3); lcd.print("nen (115200 Baud).");
+  lcd.setCursor(0, 0); lcd.print("---- SETUP MODE ----");
+  lcd.setCursor(0, 1); lcd.print("Please connect via  ");
+  lcd.setCursor(0, 2); lcd.print("serial terminal and ");
+  lcd.setCursor(0, 3); lcd.print("use 115200 baud 8N1 ");
 
   Serial.println("\n==================================================");
-  Serial.println("         ERSTEINRICHTUNG JIRA TRACKER             ");
+  Serial.println("        CONFIGURATION OF TIME TRACKER             ");
   Serial.println("==================================================");
   
-  Serial.print("1. Bitte WLAN Name (SSID) eingeben: ");
+  Serial.print("1. Please enter WLAN Name (SSID): ");
   ssid = readSerialLine();
   Serial.println(ssid);
 
-  Serial.print("2. Bitte WLAN Passwort eingeben: ");
+  Serial.print("2. Please enter WLAN Password: ");
   password = readSerialLine();
   Serial.println("********");
 
-  Serial.print("3. Bitte Jira-Host eingeben (z.B. deine-firma.atlassian.net): ");
+  Serial.print("3. Please enter Jira-Host (e.g. company.atlassian.net): ");
   jiraHost = readSerialLine();
   Serial.println(jiraHost);
 
-  Serial.print("4. Bitte Base64 Credentials eingeben: ");
+  Serial.print("4. Please enter Base64 Credentials: ");
   base64Credentials = readSerialLine();
-  Serial.println("[GESPEICHERT]");
+  Serial.println("[SAVED]");
 
-  // In Preferences permanent sichern
+  // Save to Preferences
   preferences.putString("wifi_ssid", ssid);
   preferences.putString("wifi_pass", password);
   preferences.putString("jira_host", jiraHost);
   preferences.putString("jira_cred", base64Credentials);
 
-  Serial.println("\n--> Alle Zugangsdaten erfolgreich gespeichert! Starte System neu...");
+  Serial.println("\n--> All settings successfully saved! Restarting system...");
   lcd.clear();
   lcd.setCursor(0, 1); lcd.print("Data saved!");
   lcd.setCursor(0, 2); lcd.print("Restarting system...");
@@ -233,7 +231,8 @@ void setup() {
     taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
   }
 
-  customKeypad.setHoldTime(2000); 
+  customKeypad.setHoldTime(2000);
+  customKeypad.setDebounceTime(10);
 
   lcd.setCursor(0, 1); lcd.print("Connecting to WLAN..");
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -261,7 +260,7 @@ void loop() {
   char key = customKeypad.getKey();
   KeyState kpadState = customKeypad.getState();
 
-  // Automatische Display-Abschaltung nach 30 Sekunden Inaktivität
+  // Automatic display timeout
   if (isDisplayOn && (millis() - lastActivityTime > displayTimeout)) {
     lcd.clear();
     digitalWrite(BACKLIGHT_PIN, LOW); 
@@ -500,7 +499,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes) {
   
   lcd.setCursor(0, 2);
   if (httpResponseCode == 201) {
-    lcd.print("Jira: ERFOLG!       ");
+    lcd.print("Time logged!        ");
   } else {
     lcd.print("Err HTTP:" + String(httpResponseCode));
   }
