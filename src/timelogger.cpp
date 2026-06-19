@@ -168,7 +168,7 @@ void runSerialSetup()
   lcd.setCursor(0, 0); lcd.print("---- SETUP MODE ----");
   lcd.setCursor(0, 1); lcd.print("Please connect via  ");
   lcd.setCursor(0, 2); lcd.print("serial terminal and ");
-  lcd.setCursor(0, 3); lcd.print("use 115200 baud 8N1 ");
+  lcd.setCursor(0, 3); lcd.print("use 115200 baud @8N1");
 
   Serial.println("\n==================================================");
   Serial.println("        CONFIGURATION OF TIME TRACKER             ");
@@ -221,7 +221,7 @@ String fetchTaskSummary(String issueKey)
   
   if (httpCode == 200) {
     String payload = http.getString();
-    DynamicJsonDocument doc(2048);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, payload);
     if (!error && doc["fields"]["summary"].is<const char*>()) {
       summary = doc["fields"]["summary"].as<String>();
