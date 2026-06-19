@@ -132,9 +132,9 @@ void updateDefaultDisplay()
           displayName = displayName.substring(0, dashidx);
         }
         else {
-          displayName = displayName.substring(dashidx, 9);
+          displayName = displayName.substring(dashidx+1, 9);
           if (displayName.length() > 5) {
-            displayName = displayName.substring(dashidx, dashidx+4);
+            displayName = displayName.substring(dashidx+1, dashidx+4);
           }
         }
         lcd.print(displayName);
@@ -476,7 +476,7 @@ void loop()
   // T9 Timeout
   if (configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
     lastT9Key = '\0'; 
-    lcd.setCursor(9, 2);
+    lcd.setCursor(7, 2);
     lcd.print(currentInput + " ");
   }
 
