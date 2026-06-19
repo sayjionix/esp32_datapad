@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
+String VERSION = "v1.01";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -46,16 +47,19 @@ Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS)
 String taskMapping[20];
 String taskNames[20];
 unsigned long startTimes[20] = {0};
-int activeTimerIndex = -1; 
+int activeTimerIndex = -1;
 
-int configIndex = -1;      
+int configIndex = -1;
 int manualTimeIndex = -1;
+int confirmTrackingIndex = -1;
+unsigned long confirmDurationMinutes = 0;
+int nextTimerIndexToStart = -1;
 
-String currentInput = "";    
-char lastT9Key = '\0';       
-int t9CycleIndex = 0;        
+String currentInput = "";
+char lastT9Key = '\0';
+int t9CycleIndex = 0;
 unsigned long lastT9Time = 0;
-const unsigned long t9Timeout = 1200; 
+const unsigned long t9Timeout = 1200;
 
 const String t9Chars[11] = {
   "1", "ABC2", "DEF3", "GHI4", "JKL5", "MNO6", "PQRS7", "TUV8", "WXYZ9", "0 ", "-"
@@ -69,6 +73,7 @@ String fetchTaskSummary(String issueKey);
 void handleManualTimeInput(char key);
 void handleT9Input(char key);
 void handleTracking(int index);
+void handleConfirmationInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
 
 // Return the index of the keypad's key-to-task mapping
@@ -111,10 +116,10 @@ void updateDefaultDisplay()
   {
     // Show real task name, if available
     lcd.setCursor(0, 0);
-    String displayName = taskNames[activeTimerIndex];
-    if (displayName.length() == 0 || displayName == "Unknown Task") {
-      displayName = taskMapping[activeTimerIndex];
-    }
+    String displayName = taskMapping[activeTimerIndex];
+    lcd.print(displayName);
+    lcd.setCursor(0, 1);
+    displayName = taskNames[activeTimerIndex];
     if (displayName.length() > 20) displayName = displayName.substring(0, 17) + "...";
     lcd.print(displayName);
   }
@@ -130,11 +135,14 @@ void updateDefaultDisplay()
         // Toggle ID/Number display
         if(displayNameToggle) {
           displayName = displayName.substring(0, dashidx);
+          if (displayName.length() > 4) {
+            displayName = displayName.substring(0, 4);
+          }
         }
         else {
-          displayName = displayName.substring(dashidx+1, 9);
-          if (displayName.length() > 5) {
-            displayName = displayName.substring(dashidx+1, dashidx+4);
+          displayName = displayName.substring(dashidx+1, 10);
+          if (displayName.length() > 4) {
+            displayName = displayName.substring(dashidx+1, dashidx+5);
           }
         }
         lcd.print(displayName);
@@ -288,8 +296,8 @@ void handleT9Input(char key)
       String titleName = "name_" + String(configIndex);
       preferences.putString(titleName.c_str(), fetchedName);
       
-      lcd.clear(); 
-      lcd.setCursor(0, 1); lcd.print("Success!");
+      if (fetchedName.length() > 20) fetchedName = fetchedName.substring(0, 17) + "...";
+      lcd.setCursor(0, 3); lcd.print(fetchedName);
       delay(1500);
     }
     configIndex = -1;
@@ -329,42 +337,88 @@ void handleT9Input(char key)
   }
 }
 
-void handleTracking(int index) {
-  if (startTimes[index] != 0) {
-    unsigned long durationMinutes = (millis() - startTimes[index]) / 60000;
-    if (durationMinutes == 0) durationMinutes = 1;
+void handleTracking(int index)
+{
+  // Case 1: A timer was running for the actual task -> confirm booking
+  if(startTimes[index] != 0) {
+    confirmDurationMinutes = (millis() - startTimes[index]) / 60000;
+    if(confirmDurationMinutes == 0) {
+      confirmDurationMinutes = 1;
+    }
+    confirmTrackingIndex = index;
+    nextTimerIndexToStart = -1; // No following timer
     
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("Buche Task:");
+    lcd.setCursor(0, 0); lcd.print("Book logged time?");
     lcd.setCursor(0, 1); lcd.print(taskMapping[index]);
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      logTimeToJira(taskMapping[index].c_str(), durationMinutes);
-    } else {
-      lcd.setCursor(0, 2); lcd.print("WiFi Error!");
-      delay(2000);
-    }
-    startTimes[index] = 0;
-    activeTimerIndex = -1;
-    updateDefaultDisplay();
+    lcd.setCursor(0, 2); lcd.print("Time: " + String(confirmDurationMinutes) + " Min");
+    lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
   } 
-  else {
-    if (activeTimerIndex != -1) {
-      unsigned long oldDurationMinutes = (millis() - startTimes[activeTimerIndex]) / 60000;
-      if (oldDurationMinutes == 0) oldDurationMinutes = 1;
+  // Case 2: A timer was running for a different task -> confirm booking and schedule the new task log
+  else
+  {
+    if(activeTimerIndex != -1) {
+      confirmDurationMinutes = (millis() - startTimes[activeTimerIndex]) / 60000;
+      if (confirmDurationMinutes == 0) confirmDurationMinutes = 1;
+      
+      confirmTrackingIndex = activeTimerIndex;
+      nextTimerIndexToStart = index; // Schedule the new task log
       
       lcd.clear();
-      lcd.setCursor(0, 0); lcd.print("Auto-Stop Task:");
+      lcd.setCursor(0, 0); lcd.print("Book logged time?");
       lcd.setCursor(0, 1); lcd.print(taskMapping[activeTimerIndex]);
-      
-      if (WiFi.status() == WL_CONNECTED) {
-        logTimeToJira(taskMapping[activeTimerIndex].c_str(), oldDurationMinutes);
-      }
-      startTimes[activeTimerIndex] = 0;
+      lcd.setCursor(0, 2); lcd.print("Time: " + String(confirmDurationMinutes) + " Min");
+      lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
     }
+    // Case 3: No timer was running -> start timer
+    else {
+      startTimes[index] = millis();
+      activeTimerIndex = index;
+      updateDefaultDisplay();
+    }
+  }
+}
+
+void handleConfirmationInput(char key)
+{
+  if (key == 'C') { // Log
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
+    if (WiFi.status() == WL_CONNECTED) {
+      logTimeToJira(taskMapping[confirmTrackingIndex].c_str(), confirmDurationMinutes);
+    } else {
+      lcd.setCursor(0, 2);
+      lcd.print("WiFi Error!");
+      delay(2000);
+    }
+    startTimes[confirmTrackingIndex] = 0;
     
-    startTimes[index] = millis();
-    activeTimerIndex = index;
+    // If there was a new timer scheduled, start the log
+    if (nextTimerIndexToStart != -1) {
+      startTimes[nextTimerIndexToStart] = millis();
+      activeTimerIndex = nextTimerIndexToStart;
+      nextTimerIndexToStart = -1;
+    } else {
+      activeTimerIndex = -1;
+    }
+    confirmTrackingIndex = -1;
+    updateDefaultDisplay();
+  } 
+  else if (key == 'B') { // Discard
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print(" Time log discarded ");
+    delay(1500);
+    startTimes[confirmTrackingIndex] = 0;
+    
+    // If there was a new timer scheduled, start the log
+    if (nextTimerIndexToStart != -1) {
+      startTimes[nextTimerIndexToStart] = millis();
+      activeTimerIndex = nextTimerIndexToStart;
+      nextTimerIndexToStart = -1;
+    } else {
+      activeTimerIndex = -1;
+    }
+    confirmTrackingIndex = -1;
     updateDefaultDisplay();
   }
 }
@@ -398,21 +452,21 @@ void setup()
 
   lcd.begin(20, 4);
   lcd.clear();
-  lcd.setCursor(0, 0); lcd.print("Datapad booting...");
+  lcd.setCursor(0, 0); lcd.print("Datapad " + VERSION + " boot..");
 
   Serial.begin(115200);
   delay(2000); // Wait for USB-Serial controller to initialize after a power-cycle
 
   preferences.begin("jira_tasks", false);
 
-  // Check for simultaneous press of S and A to reset configuration
+  // Check for simultaneous press of Shift ('S') and Enter ('C') to enter setup mode
   customKeypad.getKeys();
-  bool hasS = false, hasA = false;
+  bool hasS = false, hasC = false;
   for (int i=0; i<LIST_MAX; i++) {
     if (customKeypad.key[i].kchar == 'S' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasS = true;
-    if (customKeypad.key[i].kchar == 'A' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasA = true;
+    if (customKeypad.key[i].kchar == 'C' && (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) hasC = true;
   }
-  if (hasS && hasA) {
+  if (hasS && hasC) {
     runSerialSetup();
   }
 
@@ -431,7 +485,7 @@ void setup()
   for (int i = 0; i < 20; i++) {
     String keyName = "task_" + String(i);
     String titleName = "name_" + String(i);
-    taskMapping[i] = preferences.getString(keyName.c_str(), "PROJ-" + String(i + 1));
+    taskMapping[i] = preferences.getString(keyName.c_str(), "*****-*****");
     taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
   }
 
@@ -450,7 +504,9 @@ void setup()
     wifiTimeoutCounter++;
     if (wifiTimeoutCounter > 30) { // Print error message after 15s and restart
       Serial.println("\nError establishing WiFi connection! Restarting...");
-      lcd.clear(); lcd.setCursor(0, 1); lcd.print("WiFi Error!");
+      lcd.setCursor(0, 1); lcd.print("WiFi Error!         ");
+      lcd.setCursor(0, 2); lcd.print("Hold Shift + Enter  ");
+      lcd.setCursor(0, 3); lcd.print("to enter Setup Mode ");
       delay(3000);
       ESP.restart();
     }
@@ -466,22 +522,22 @@ void loop()
   bool isAPressed = false;
   static unsigned long lastUpdateTime = 0;
 
-  // Automatic display timeout (except in T9-entry or manual-entry mode)
-  if (isDisplayOn && configIndex == -1 && manualTimeIndex == -1 && (millis() - lastActivityTime > displayTimeout)) {
+  // Automatic display timeout (except in T9-entry mode, manual-entry mode and confirmation dialog)
+  if(isDisplayOn && configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 &&
+    (millis() - lastActivityTime > displayTimeout)) {
     lcd.clear();
     digitalWrite(BACKLIGHT_PIN, LOW); 
     isDisplayOn = false;
   }
 
   // T9 Timeout
-  if (configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
+  if(configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
     lastT9Key = '\0'; 
     lcd.setCursor(7, 2);
     lcd.print(currentInput + " ");
   }
 
-  // Fills customKeypad.key[] array with up-to 10 active keys.
-  // Returns true if there are ANY active keys.
+  // Fills customKeypad.key[] array with up-to 10 active keys. Returns true if there are ANY active keys.
   if(customKeypad.getKeys())
   {
     // Turn on display on any keypress
@@ -509,14 +565,17 @@ void loop()
     {
       int taskidx = getKeyIndex(customKeypad.key[0].kchar);
 
-      if (configIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
+      if(configIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
         handleT9Input(customKeypad.key[0].kchar);
       } 
-      else if (manualTimeIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
+      else if(manualTimeIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
         handleManualTimeInput(customKeypad.key[0].kchar);
-      } 
+      }
+      else if(confirmTrackingIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
+        handleConfirmationInput(customKeypad.key[0].kchar);
+      }
       // Normal press: Start / Stop task timer
-      else if (!isShiftPressed && customKeypad.key[0].kstate == PRESSED && taskidx != -1) {
+      else if(!isShiftPressed && customKeypad.key[0].kstate == PRESSED && taskidx != -1) {
         handleTracking(taskidx);
       }
     }
@@ -555,7 +614,8 @@ void loop()
   }
 
   // Update display every 4 seconds
-  if(isDisplayOn && activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 && ((millis() - lastUpdateTime) > 4000))
+  if(isDisplayOn && activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
+    confirmTrackingIndex == -1 && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
     displayNameToggle = (displayNameToggle == false) ? true : false;
@@ -563,7 +623,9 @@ void loop()
   }
 
   // Update seconds in case of running timer
-  if (isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1) {
+  if(isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
+    confirmTrackingIndex == -1)
+  {
     static unsigned long lastSecUpdate = 0;
     if (millis() - lastSecUpdate > 1000) {
       lastSecUpdate = millis();
@@ -571,7 +633,7 @@ void loop()
       unsigned long mins = totalSecs / 60;
       unsigned long secs = totalSecs % 60;
       
-      lcd.setCursor(0, 1);
+      lcd.setCursor(0, 2);
       char timeBuf[21];
       sprintf(timeBuf, "Running: %02lu:%02lu      ", mins, secs);
       lcd.print(timeBuf);
