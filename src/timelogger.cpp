@@ -135,7 +135,7 @@ void updateDefaultDisplay()
         String displayName = taskMapping[line*4+j];
         int dashidx = displayName.indexOf('-');
 
-        // Toggle ID/Number display
+        // Toggle between Project Key and Issue Number display
         if(displayNameToggle) {
           displayName = displayName.substring(0, dashidx);
           if (displayName.length() > 4) {
@@ -165,6 +165,7 @@ String readSerialLine()
   return input;
 }
 
+// Interactive configuration wizard via hardware serial terminal
 void runSerialSetup()
 {
   lcd.clear();
@@ -193,7 +194,7 @@ void runSerialSetup()
   base64Credentials = readSerialLine();
   Serial.println("[SAVED]");
 
-  // Save to Preferences
+  // Save to Preferences (Non-Volatile Storage)
   preferences.putString("wifi_ssid", ssid);
   preferences.putString("wifi_pass", password);
   preferences.putString("jira_host", jiraHost);
@@ -238,7 +239,7 @@ String fetchTaskSummary(String issueKey)
 // Process key entries during manual minute input mode
 void handleManualTimeInput(char key)
 {
-  if (key == 'C') // Confirm
+  if (key == 'C') // Confirm and upload entry
   {
     lcd.clear();
     if (currentInput.length() > 0) {
@@ -259,7 +260,7 @@ void handleManualTimeInput(char key)
     return;
   }
 
-  if (key == 'B') // Delete last character / Cancel
+  if (key == 'B') // Delete last character / Cancel mode if empty
   {
     if (currentInput.length() > 0) {
       currentInput.remove(currentInput.length() - 1);
@@ -283,7 +284,7 @@ void handleManualTimeInput(char key)
 // Process character cycling for T9 Jira ID string editing
 void handleT9Input(char key)
 {
-  if (key == 'C') // Confirm
+  if (key == 'C') // Confirm and fetch Jira details
   {
     if (currentInput.length() > 0) {
       lcd.clear();
@@ -295,7 +296,7 @@ void handleT9Input(char key)
       String keyName = "task_" + String(configIndex);
       preferences.putString(keyName.c_str(), currentInput);
       
-      // 2. API-Request for real task name
+      // 2. Request real task name from Jira API
       lcd.setCursor(0, 2); lcd.print("Loading Jira-Name...");
       String fetchedName = fetchTaskSummary(currentInput);
       
@@ -312,7 +313,7 @@ void handleT9Input(char key)
     return;
   }
 
-  if (key == 'B') // Delete last character / Cancel
+  if (key == 'B') // Backspace / Cancel mode if empty
   {
     if (currentInput.length() > 0) {
       currentInput.remove(currentInput.length() - 1);
@@ -326,6 +327,7 @@ void handleT9Input(char key)
     return;
   }
 
+  // Handle T9 character cycling timeout and tracking
   int t9Idx = getT9LayoutIndex(key);
   if (t9Idx != -1) {
     unsigned long now = millis();
@@ -347,14 +349,14 @@ void handleT9Input(char key)
 // Logic hook for starting or prompting to log timers
 void handleTracking(int index)
 {
-  // Case 1: A timer was running for the actual task -> confirm booking
+  // Case 1: A timer was running for the actual task -> open stop-confirmation prompt
   if(startTimes[index] != 0) {
     confirmDurationMinutes = (millis() - startTimes[index]) / 60000;
     if(confirmDurationMinutes == 0) {
       confirmDurationMinutes = 1;
     }
     confirmTrackingIndex = index;
-    nextTimerIndexToStart = -1; // No following timer
+    nextTimerIndexToStart = -1; // No context switch needed after dialog
     
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Book logged time?");
@@ -362,7 +364,7 @@ void handleTracking(int index)
     lcd.setCursor(0, 2); lcd.print("Time: " + String(confirmDurationMinutes) + " Min");
     lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
   } 
-  // Case 2: A timer was running for a different task -> confirm booking and schedule the new task log
+  // Case 2: A timer was running for a different task -> confirm booking old task and auto-schedule new task
   else
   {
     if(activeTimerIndex != -1) {
@@ -370,7 +372,7 @@ void handleTracking(int index)
       if (confirmDurationMinutes == 0) confirmDurationMinutes = 1;
       
       confirmTrackingIndex = activeTimerIndex;
-      nextTimerIndexToStart = index; // Schedule the new task log
+      nextTimerIndexToStart = index; // Queue up next task index to spin up after dialog finishes
       
       lcd.clear();
       lcd.setCursor(0, 0); lcd.print("Book logged time?");
@@ -378,7 +380,7 @@ void handleTracking(int index)
       lcd.setCursor(0, 2); lcd.print("Time: " + String(confirmDurationMinutes) + " Min");
       lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
     }
-    // Case 3: No timer was running -> start timer
+    // Case 3: No timer was running at all -> spin up new timer instantly
     else {
       startTimes[index] = millis();
       activeTimerIndex = index;
@@ -390,7 +392,7 @@ void handleTracking(int index)
 // Handle the user response inside the confirmation dialog window
 void handleConfirmationInput(char key)
 {
-  if (key == 'C') { // Log (Enter=Yes)
+  if (key == 'C') { // Log to Jira (Enter=Yes)
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
     if (WiFi.status() == WL_CONNECTED) {
@@ -402,7 +404,7 @@ void handleConfirmationInput(char key)
     }
     startTimes[confirmTrackingIndex] = 0;
     
-    // If there was a new timer scheduled, start the log
+    // Check if another task timer needs to spin up (Context switch scenario)
     if (nextTimerIndexToStart != -1) {
       startTimes[nextTimerIndexToStart] = millis();
       activeTimerIndex = nextTimerIndexToStart;
@@ -413,13 +415,13 @@ void handleConfirmationInput(char key)
     confirmTrackingIndex = -1;
     updateDefaultDisplay();
   } 
-  else if (key == 'B') { // Discard (Cancel=No)
+  else if (key == 'B') { // Discard tracked time (Cancel=No)
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print(" Time log discarded ");
     delay(1500);
     startTimes[confirmTrackingIndex] = 0;
     
-    // If there was a new timer scheduled, start the log anyway
+    // Start queued timer even if previous log was discarded
     if (nextTimerIndexToStart != -1) {
       startTimes[nextTimerIndexToStart] = millis();
       activeTimerIndex = nextTimerIndexToStart;
@@ -469,7 +471,7 @@ void setup()
 
   preferences.begin("jira_tasks", false);
 
-  // Check for simultaneous press of Shift ('S') and Enter ('C') to enter setup mode
+  // Check for simultaneous press of Shift ('S') and Enter ('C') to force setup mode bypass
   customKeypad.getKeys();
   bool hasS = false, hasC = false;
   for (int i=0; i<LIST_MAX; i++) {
@@ -480,18 +482,18 @@ void setup()
     runSerialSetup();
   }
 
-  // Load WiFi and Jira access data from EEPROM
+  // Load WiFi and Jira access data from non-volatile preferences
   ssid = preferences.getString("wifi_ssid", "");
   password = preferences.getString("wifi_pass", "");
   jiraHost = preferences.getString("jira_host", "");
   base64Credentials = preferences.getString("jira_cred", "");
 
-  // Enter serial Setup Mode if any of the preferences could not be loaded
+  // Fall back to configuration mode if credentials are empty
   if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
     runSerialSetup();
   }
 
-  // Load Task-Mappings
+  // Populate task runtime parameters from storage slots
   for (int i = 0; i < 20; i++) {
     String keyName = "task_" + String(i);
     String titleName = "name_" + String(i);
@@ -512,7 +514,7 @@ void setup()
     delay(500); 
     Serial.print("."); 
     wifiTimeoutCounter++;
-    if (wifiTimeoutCounter > 30) { // Print error message after 15s and restart
+    if (wifiTimeoutCounter > 30) { // Timeout reached after roughly 15s -> abort and restart node
       Serial.println("\nError establishing WiFi connection! Restarting...");
       lcd.setCursor(0, 1); lcd.print("WiFi Error!         ");
       lcd.setCursor(0, 2); lcd.print("Hold Shift + Enter  ");
@@ -540,7 +542,7 @@ void loop()
     isDisplayOn = false;
   }
 
-  // T9 Timeout
+  // Handle character selection timeout inside T9 layout engine
   if(configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
     lastT9Key = '\0'; 
     lcd.setCursor(7, 2);
@@ -550,7 +552,7 @@ void loop()
   // Fills customKeypad.key[] array with up-to 10 active keys. Returns true if there are ANY active keys.
   if(customKeypad.getKeys())
   {
-    // Turn on display on any keypress
+    // Wake display up on any keystroke detection event
     if(!isDisplayOn) {
       resetDisplayTimeout();
       return;
@@ -567,12 +569,14 @@ void loop()
       }
       return;
     }
+    
     if (configIndex != -1) {
       if (firstState == PRESSED) {
         handleT9Input(firstKey);
       }
       return;
     }
+
     if (manualTimeIndex != -1) {
       if (firstState == PRESSED) {
         handleManualTimeInput(firstKey);
@@ -601,7 +605,7 @@ void loop()
     {
       int taskidx = getKeyIndex(customKeypad.key[1].kchar);
 
-      // Start T9 mode for task entry (Shift + Task Key)
+      // Shift + Task Key combination -> Switch into T9 Setup Editor Mode
       if(isShiftPressed && taskidx != -1) {
         configIndex = taskidx;
         currentInput = "";
@@ -614,7 +618,7 @@ void loop()
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
       }
 
-      // Direct manual time entry (A + Task Key)
+      // Action 'A' + Task Key combination -> Switch into Direct Manual Minute Input Mode
       if(isAPressed && taskidx != -1) {
         manualTimeIndex = taskidx;
         currentInput = "";
