@@ -21,6 +21,7 @@ String base64Credentials = "";
 unsigned long lastActivityTime = 0;
 const unsigned long displayTimeout = 60000; 
 bool isDisplayOn = true;
+bool displayNameToggle = true;
 
 // Keypad Definition (rows and cols are inverted here to match anti-ghosting diode polarity with library code)
 const byte ROWS = 4; 
@@ -101,37 +102,55 @@ void resetDisplayTimeout()
   }
 }
 
-void updateDefaultDisplay() {
+void updateDefaultDisplay()
+{
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("   Jira Tracker v1  ");
-  lcd.setCursor(0, 1);
-  lcd.print("--------------------");
   
-  lcd.setCursor(0, 2);
-  if (activeTimerIndex != -1) {
-    // Zeige den echten Namen an (gekürzt auf 20 Zeichen fürs Display)
+  // There is an active timer running
+  if(activeTimerIndex != -1)
+  {
+    // Show real task name, if available
+    lcd.setCursor(0, 0);
     String displayName = taskNames[activeTimerIndex];
-    if (displayName.length() == 0 || displayName == "Unbekannter Task") {
+    if (displayName.length() == 0 || displayName == "Unknown Task") {
       displayName = taskMapping[activeTimerIndex];
     }
     if (displayName.length() > 20) displayName = displayName.substring(0, 17) + "...";
     lcd.print(displayName);
-  } else {
-    lcd.print("Status: Bereit.");
   }
-  
-  lcd.setCursor(0, 3);
-  lcd.print("Klick=Start Hlt=Zeit");
+  // No active timer running -> show Jira ID overview
+  else
+  {
+    for(int line=0; line < 4; line++) {
+      for (int j=0; j < 4; j++) {
+        lcd.setCursor(j*5, line);
+        String displayName = taskMapping[line*4+j];
+        int dashidx = displayName.indexOf('-');
+
+        // Toggle ID/Number display
+        if(displayNameToggle) {
+          displayName = displayName.substring(0, dashidx);
+        }
+        else {
+          displayName = displayName.substring(dashidx, 9);
+          if (displayName.length() > 5) {
+            displayName = displayName.substring(dashidx, dashidx+4);
+          }
+        }
+        lcd.print(displayName);
+      }
+    }
+  }
 }
 
-// Liest einen String über die serielle Schnittstelle ein (blockierend fürs Setup)
-String readSerialLine() {
+// Read a line from serial interface (blocking)
+String readSerialLine()
+{
   while (!Serial.available()) {
     delay(50);
   }
   String input = Serial.readStringUntil('\n');
-  input.trim(); // Zeilenumbrüche und Leerzeichen am Ende entfernen
+  input.trim(); // Remove line-breaks and spaces at the end
   return input;
 }
 
@@ -253,7 +272,7 @@ void handleT9Input(char key)
   {
     if (currentInput.length() > 0) {
       lcd.clear();
-      lcd.setCursor(0, 0); lcd.print("Saving Jira Key...");
+      lcd.setCursor(0, 0); lcd.print("Saving Jira ID...");
       lcd.setCursor(0, 1); lcd.print(currentInput);
       
       // 1. Save Key in RAM and NVS
@@ -283,7 +302,7 @@ void handleT9Input(char key)
     if (currentInput.length() > 0) {
       currentInput.remove(currentInput.length() - 1);
       lastT9Key = '\0';
-      lcd.setCursor(9, 2); lcd.print(currentInput + "    ");
+      lcd.setCursor(7, 2); lcd.print(currentInput + "    ");
     }
     else {
       configIndex = -1;
@@ -306,7 +325,7 @@ void handleT9Input(char key)
     }
     lastT9Key = key;
     lastT9Time = now;
-    lcd.setCursor(9, 2); lcd.print(currentInput);
+    lcd.setCursor(7, 2); lcd.print(currentInput);
   }
 }
 
@@ -416,8 +435,8 @@ void setup()
     taskNames[i] = preferences.getString(titleName.c_str(), "Task " + String(i + 1));
   }
 
-  customKeypad.setHoldTime(2000);
-  customKeypad.setDebounceTime(10);
+  customKeypad.setHoldTime(500);
+  customKeypad.setDebounceTime(50);
 
   // Connect to WiFi
   lcd.setCursor(0, 1); lcd.print("Connecting to WiFi..");
@@ -445,8 +464,7 @@ void loop()
 {
   bool isShiftPressed = false;
   bool isAPressed = false;
-  //char key = customKeypad.getKey();
-  //KeyState kpadState = customKeypad.getState();
+  static unsigned long lastUpdateTime = 0;
 
   // Automatic display timeout (except in T9-entry or manual-entry mode)
   if (isDisplayOn && configIndex == -1 && manualTimeIndex == -1 && (millis() - lastActivityTime > displayTimeout)) {
@@ -454,11 +472,6 @@ void loop()
     digitalWrite(BACKLIGHT_PIN, LOW); 
     isDisplayOn = false;
   }
-  // Turn on display on keypress
-  /*if (!isDisplayOn && key) {
-    resetDisplayTimeout();
-    return;
-  }*/
 
   // T9 Timeout
   if (configIndex != -1 && currentInput.length() > 0 && (millis() - lastT9Time > t9Timeout) && lastT9Key != '\0') {
@@ -467,7 +480,7 @@ void loop()
     lcd.print(currentInput + " ");
   }
 
-  // Fills customKeypad.key[ ] array with up-to 10 active keys.
+  // Fills customKeypad.key[] array with up-to 10 active keys.
   // Returns true if there are ANY active keys.
   if(customKeypad.getKeys())
   {
@@ -483,11 +496,7 @@ void loop()
     if(customKeypad.key[0].kchar == 'S' && 
       (customKeypad.key[0].kstate == PRESSED || customKeypad.key[0].kstate == HOLD))
     {
-      //if(isShiftPressed == false) {
-        isShiftPressed = true;
-      /*} else {
-        isShiftPressed = false;
-      }*/
+      isShiftPressed = true;
     }
     // Check for 'A' as FIRST key being pressed
     else if(customKeypad.key[0].kchar == 'A' && 
@@ -500,10 +509,10 @@ void loop()
     {
       int taskidx = getKeyIndex(customKeypad.key[0].kchar);
 
-      if (configIndex != -1) {
+      if (configIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
         handleT9Input(customKeypad.key[0].kchar);
       } 
-      else if (manualTimeIndex != -1) {
+      else if (manualTimeIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
         handleManualTimeInput(customKeypad.key[0].kchar);
       } 
       // Normal press: Start / Stop task timer
@@ -525,10 +534,10 @@ void loop()
         lastT9Key = '\0';
         
         lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("!!! T9-SETUP !!!");
-        lcd.setCursor(0, 1); lcd.print("Taste " + String(customKeypad.key[1].kchar) + " -> Jira Key");
-        lcd.setCursor(0, 2); lcd.print("Eingabe: ");
-        lcd.setCursor(0, 3); lcd.print("D=Del F=Save");
+        lcd.setCursor(0, 0); lcd.print("Enter Jira Task ID!");
+        lcd.setCursor(0, 1); lcd.print("Key " + String(customKeypad.key[1].kchar) + " -> Jira ID");
+        lcd.setCursor(0, 2); lcd.print("Entry: ");
+        lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
       }
 
       // Direct time entry
@@ -540,88 +549,18 @@ void loop()
         lcd.setCursor(0, 0); lcd.print("Manual entry for:");
         lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
         lcd.setCursor(0, 2); lcd.print("Minutes: ");
-        lcd.setCursor(0, 3); lcd.print("Enter=Book");
+        lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=Log");
       }
     }
   }
 
-/*
-  // Check for 'S' (Shift) key being pressed
-  for (int i = 0; i < LIST_MAX; i++) {
-    if (customKeypad.key[i].kchar == 'S' && 
-        (customKeypad.key[i].kstate == PRESSED || customKeypad.key[i].kstate == HOLD)) {
-      if(isShiftPressed == false) {
-        isShiftPressed = true;
-      } else {
-        isShiftPressed = false;
-      }
-    }
+  // Update display every 4 seconds
+  if(isDisplayOn && activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 && ((millis() - lastUpdateTime) > 4000))
+  {
+    lastUpdateTime = millis();
+    displayNameToggle = (displayNameToggle == false) ? true : false;
+    updateDefaultDisplay();
   }
-
-  if (key) {
-    resetDisplayTimeout(); 
-    int idx = getKeyIndex(key);
-
-    if (configIndex != -1) {
-      handleT9Input(key);
-    } 
-    else if (manualTimeIndex != -1) {
-      handleManualTimeInput(key);
-    } 
-    else {
-      // COMBO: T9 Setup starten
-      if (isShiftPressed && kpadState == PRESSED && idx != -1) {
-        configIndex = idx;
-        currentInput = "";
-        lastT9Key = '\0';
-        
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("!!! T9-SETUP !!!");
-        lcd.setCursor(0, 1); lcd.print("Taste " + String(key) + " -> Jira Key");
-        lcd.setCursor(0, 2); lcd.print("Eingabe: ");
-        lcd.setCursor(0, 3); lcd.print("D=Del F=Save");
-      }
-      // Long press: direct time entry
-      else if (!isShiftPressed && kpadState == HOLD && idx != -1) {
-        if (idx != -1) {
-          resetDisplayTimeout();
-          manualTimeIndex = idx;
-          currentInput = "";
-          
-          lcd.clear();
-          lcd.setCursor(0, 0); lcd.print("Manual entry for:");
-          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
-          lcd.setCursor(0, 2); lcd.print("Minutes: ");
-          lcd.setCursor(0, 3); lcd.print("Enter=Book");
-        }
-      }
-      // NORMALER KLICK: Start / Stopp
-      else if (!isShiftPressed && kpadState == RELEASED && idx != -1) {
-        handleTracking(idx);
-      }
-    }
-  }*/
-
-  // Long press: direct time entry
-/*   if (kpadState == HOLD && configIndex == -1 && manualTimeIndex == -1) {
-    for (int i = 0; i < ROWS; i++) {
-      if (customKeypad.key[i].kstate == HOLD) {
-        char heldKey = customKeypad.key[i].kchar;
-        int idx = getKeyIndex(heldKey);
-        if (idx != -1 && heldKey != 'S' && heldKey != 'A' && heldKey != 'B' && heldKey != 'C') {
-          resetDisplayTimeout();
-          manualTimeIndex = idx;
-          currentInput = "";
-          
-          lcd.clear();
-          lcd.setCursor(0, 0); lcd.print("Manual entry for:");
-          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
-          lcd.setCursor(0, 2); lcd.print("Minutes: ");
-          lcd.setCursor(0, 3); lcd.print("Enter=Book");
-        }
-      }
-    }
-  } */
 
   // Update seconds in case of running timer
   if (isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1) {
@@ -632,7 +571,7 @@ void loop()
       unsigned long mins = totalSecs / 60;
       unsigned long secs = totalSecs % 60;
       
-      lcd.setCursor(0, 3);
+      lcd.setCursor(0, 1);
       char timeBuf[21];
       sprintf(timeBuf, "Running: %02lu:%02lu      ", mins, secs);
       lcd.print(timeBuf);
