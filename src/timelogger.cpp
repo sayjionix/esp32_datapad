@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.01";
+String VERSION = "v1.02";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -381,7 +381,7 @@ void handleTracking(int index)
 
 void handleConfirmationInput(char key)
 {
-  if (key == 'C') { // Log
+  if (key == 'C') { // Log (Enter=Yes)
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
     if (WiFi.status() == WL_CONNECTED) {
@@ -404,13 +404,13 @@ void handleConfirmationInput(char key)
     confirmTrackingIndex = -1;
     updateDefaultDisplay();
   } 
-  else if (key == 'B') { // Discard
+  else if (key == 'B') { // Discard (Cancel=No)
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print(" Time log discarded ");
     delay(1500);
     startTimes[confirmTrackingIndex] = 0;
     
-    // If there was a new timer scheduled, start the log
+    // If there was a new timer scheduled, start the log anyway
     if (nextTimerIndexToStart != -1) {
       startTimes[nextTimerIndexToStart] = millis();
       activeTimerIndex = nextTimerIndexToStart;
@@ -548,45 +548,50 @@ void loop()
     resetDisplayTimeout(); 
     
     // EVALUATE FIRST KEY
-    // Check for 'S' (Shift) as FIRST key being pressed
-    if(customKeypad.key[0].kchar == 'S' && 
-      (customKeypad.key[0].kstate == PRESSED || customKeypad.key[0].kstate == HOLD))
-    {
+    char firstKey = customKeypad.key[0].kchar;
+    KeyState firstState = customKeypad.key[0].kstate;
+
+    if (confirmTrackingIndex != -1) {
+      if (firstState == PRESSED) {
+        handleConfirmationInput(firstKey);
+      }
+      return;
+    }
+    if (configIndex != -1) {
+      if (firstState == PRESSED) {
+        handleT9Input(firstKey);
+      }
+      return;
+    }
+    if (manualTimeIndex != -1) {
+      if (firstState == PRESSED) {
+        handleManualTimeInput(firstKey);
+      }
+      return;
+    }
+
+    // Check if 'S' (Shift) or 'A' is active on the first key position
+    if(firstKey == 'S' && (firstState == PRESSED || firstState == HOLD)) {
       isShiftPressed = true;
     }
-    // Check for 'A' as FIRST key being pressed
-    else if(customKeypad.key[0].kchar == 'A' && 
-      (customKeypad.key[0].kstate == PRESSED || customKeypad.key[0].kstate == HOLD))
-    {
+    else if(firstKey == 'A' && (firstState == PRESSED || firstState == HOLD)) {
       isAPressed = true;
     }
-    // Any other key was pressed as FIRST key
-    else
-    {
-      int taskidx = getKeyIndex(customKeypad.key[0].kchar);
-
-      if(configIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
-        handleT9Input(customKeypad.key[0].kchar);
-      } 
-      else if(manualTimeIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
-        handleManualTimeInput(customKeypad.key[0].kchar);
-      }
-      else if(confirmTrackingIndex != -1 && customKeypad.key[0].kstate == PRESSED) {
-        handleConfirmationInput(customKeypad.key[0].kchar);
-      }
-      // Normal press: Start / Stop task timer
-      else if(!isShiftPressed && customKeypad.key[0].kstate == PRESSED && taskidx != -1) {
+    else {
+      // Single Key Action (No Shift, No 'A')
+      int taskidx = getKeyIndex(firstKey);
+      if(firstState == PRESSED && taskidx != -1) {
         handleTracking(taskidx);
       }
     }
     
-    // EVALUATE POTENTIAL SECOND KEY
+    // Evaluate multi-key state (Shift + Task-Key or A + Task-Key)
     if(customKeypad.key[1].kchar != NO_KEY && 
       (customKeypad.key[1].kstate == PRESSED || customKeypad.key[1].kstate == HOLD))
     {
       int taskidx = getKeyIndex(customKeypad.key[1].kchar);
 
-      // Start T9 mode for task entry
+      // Start T9 mode for task entry (Shift + Task Key)
       if(isShiftPressed && taskidx != -1) {
         configIndex = taskidx;
         currentInput = "";
@@ -599,7 +604,7 @@ void loop()
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
       }
 
-      // Direct time entry
+      // Direct manual time entry (A + Task Key)
       if(isAPressed && taskidx != -1) {
         manualTimeIndex = taskidx;
         currentInput = "";
@@ -613,16 +618,16 @@ void loop()
     }
   }
 
-  // Update display every 4 seconds
+  // Update display every 4 seconds (Jira ID Overview)
   if(isDisplayOn && activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
     confirmTrackingIndex == -1 && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
-    displayNameToggle = (displayNameToggle == false) ? true : false;
+    displayNameToggle = !displayNameToggle;
     updateDefaultDisplay();
   }
 
-  // Update seconds in case of running timer
+  // Update live counter seconds for running timer
   if(isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
     confirmTrackingIndex == -1)
   {
