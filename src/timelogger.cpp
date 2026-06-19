@@ -89,6 +89,7 @@ int getKeyIndex(char key)
   return -1;
 }
 
+// Map keypad keys to T9 layout indices
 int getT9LayoutIndex(char key)
 {
   if (key >= '1' && key <= '9') return key - '1';
@@ -97,6 +98,7 @@ int getT9LayoutIndex(char key)
   return -1;
 }
 
+// Reset display sleep timer and turn backlight back on
 void resetDisplayTimeout()
 {
   lastActivityTime = millis();
@@ -107,6 +109,7 @@ void resetDisplayTimeout()
   }
 }
 
+// Render the current UI state to the LCD
 void updateDefaultDisplay()
 {
   lcd.clear();
@@ -123,7 +126,7 @@ void updateDefaultDisplay()
     if (displayName.length() > 20) displayName = displayName.substring(0, 17) + "...";
     lcd.print(displayName);
   }
-  // No active timer running -> show Jira ID overview
+  // No active timer running -> show Jira ID overview matrix
   else
   {
     for(int line=0; line < 4; line++) {
@@ -204,11 +207,12 @@ void runSerialSetup()
   ESP.restart();
 }
 
+// Fetch the issue summary title string from Jira REST API
 String fetchTaskSummary(String issueKey)
 {
   if (WiFi.status() != WL_CONNECTED) return "No WiFi!";
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setInsecure(); // Skip SSL certificate verification for simplicity
   HTTPClient http;
   
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + issueKey + "?fields=summary";
@@ -231,6 +235,7 @@ String fetchTaskSummary(String issueKey)
   return summary;
 }
 
+// Process key entries during manual minute input mode
 void handleManualTimeInput(char key)
 {
   if (key == 'C') // Confirm
@@ -267,6 +272,7 @@ void handleManualTimeInput(char key)
     return;
   }
 
+  // Append digit to input buffer
   if ((key >= '1' && key <= '9') || key == '0') {
     char digit = (key == '0') ? '0' : key;
     currentInput += digit;
@@ -274,6 +280,7 @@ void handleManualTimeInput(char key)
   }
 }
 
+// Process character cycling for T9 Jira ID string editing
 void handleT9Input(char key)
 {
   if (key == 'C') // Confirm
@@ -337,6 +344,7 @@ void handleT9Input(char key)
   }
 }
 
+// Logic hook for starting or prompting to log timers
 void handleTracking(int index)
 {
   // Case 1: A timer was running for the actual task -> confirm booking
@@ -379,6 +387,7 @@ void handleTracking(int index)
   }
 }
 
+// Handle the user response inside the confirmation dialog window
 void handleConfirmationInput(char key)
 {
   if (key == 'C') { // Log (Enter=Yes)
@@ -423,6 +432,7 @@ void handleConfirmationInput(char key)
   }
 }
 
+// Assemble JSON payload and execute POST request to Jira REST API endpoint
 void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
   WiFiClientSecure client; client.setInsecure(); HTTPClient http;
