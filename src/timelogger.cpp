@@ -151,14 +151,25 @@ void updateDefaultDisplay()
   }
 }
 
-// Read a line from serial interface (blocking)
+// Robustly read a line from serial interface filtering out both Carriage Return and Line Feed
 String readSerialLine()
 {
-  while (!Serial.available()) {
-    delay(50);
+  String input = "";
+  while (true) {
+    if (Serial.available()) {
+      char c = Serial.read();
+      if (c == '\n' || c == '\r') {
+        // If we hit a newline character and already have content, we finish reading
+        if (input.length() > 0) {
+          break;
+        }
+      } else {
+        input += c;
+      }
+    }
+    delay(5);
   }
-  String input = Serial.readStringUntil('\n');
-  input.trim(); // Remove line-breaks and spaces at the end
+  input.trim();
   return input;
 }
 
@@ -188,7 +199,7 @@ void runSerialSetup()
     Serial.print("4. Base64 Credentials:       "); Serial.println(base64Credentials == "" ? "[NOT SET]" : "[SAVED]");
     Serial.print("5. Max Timer Duration:       "); Serial.print(maxTimerHours); Serial.println(" Hours");
     Serial.println("--------------------------------------------------");
-    Serial.println("6. Save & Restart System");
+    Serial.println("6. Restart System");
     Serial.println("==================================================");
     Serial.print("Please select an option (1-6): ");
 
@@ -241,7 +252,7 @@ void runSerialSetup()
       break;
     } 
     else {
-      Serial.println("Invalid selection! Please enter a number between 1 and 6.");
+      Serial.print("Invalid selection! You entered '"); Serial.print(choice); Serial.println("'. Please enter a number between 1 and 6.");
     }
     delay(500);
   }
