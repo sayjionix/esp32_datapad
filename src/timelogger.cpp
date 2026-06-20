@@ -170,33 +170,66 @@ void runSerialSetup()
   lcd.setCursor(0, 2); lcd.print("serial terminal and ");
   lcd.setCursor(0, 3); lcd.print("use 115200 baud @8N1");
 
-  Serial.println("\n==================================================");
-  Serial.println("        CONFIGURATION OF TIME TRACKER             ");
-  Serial.println("==================================================");
-  
-  Serial.print("1. Please enter WiFi Name (SSID): ");
-  ssid = readSerialLine();
-  Serial.println(ssid);
+  // Load existing values first so they are up to date in the menu
+  ssid = preferences.getString("wifi_ssid", "");
+  password = preferences.getString("wifi_pass", "");
+  jiraHost = preferences.getString("jira_host", "");
+  base64Credentials = preferences.getString("jira_cred", "");
 
-  Serial.print("2. Please enter WiFi Password: ");
-  password = readSerialLine();
-  Serial.println("********");
+  while (true) {
+    Serial.println("\n==================================================");
+    Serial.println("         CONFIGURATION OF TIME TRACKER            ");
+    Serial.println("==================================================");
+    Serial.print("1. WiFi Name (SSID):         "); Serial.println(ssid == "" ? "[NOT SET]" : ssid);
+    Serial.print("2. WiFi Password:            "); Serial.println(password == "" ? "[NOT SET]" : "********");
+    Serial.print("3. Jira-Host:                "); Serial.println(jiraHost == "" ? "[NOT SET]" : jiraHost);
+    Serial.print("4. Base64 Credentials:       "); Serial.println(base64Credentials == "" ? "[NOT SET]" : "[SAVED]");
+    Serial.println("--------------------------------------------------");
+    Serial.println("5. Save & Restart System");
+    Serial.println("==================================================");
+    Serial.print("Please select an option (1-5): ");
 
-  Serial.print("3. Please enter Jira-Host (e.g. company.atlassian.net): ");
-  jiraHost = readSerialLine();
-  Serial.println(jiraHost);
+    String choice = readSerialLine();
+    Serial.println(choice);
 
-  Serial.print("4. Please enter Base64 Credentials: ");
-  base64Credentials = readSerialLine();
-  Serial.println("[SAVED]");
+    if (choice == "1") {
+      Serial.print("Enter new WiFi Name (SSID): ");
+      ssid = readSerialLine();
+      Serial.println(ssid);
+      preferences.putString("wifi_ssid", ssid);
+      Serial.println("--> WiFi Name updated in storage.");
+    } 
+    else if (choice == "2") {
+      Serial.print("Enter new WiFi Password: ");
+      password = readSerialLine();
+      Serial.println("********");
+      preferences.putString("wifi_pass", password);
+      Serial.println("--> WiFi Password updated in storage.");
+    } 
+    else if (choice == "3") {
+      Serial.print("Enter new Jira-Host (e.g. company.atlassian.net): ");
+      jiraHost = readSerialLine();
+      Serial.println(jiraHost);
+      preferences.putString("jira_host", jiraHost);
+      Serial.println("--> Jira-Host updated in storage.");
+    } 
+    else if (choice == "4") {
+      Serial.print("Enter new Base64 Credentials: ");
+      base64Credentials = readSerialLine();
+      Serial.println("[SAVED]");
+      preferences.putString("jira_cred", base64Credentials);
+      Serial.println("--> Base64 Credentials updated in storage.");
+    } 
+    else if (choice == "5") {
+      Serial.println("\n--> All settings successfully verified! Restarting system...");
+      break;
+    } 
+    else {
+      Serial.println("Invalid selection! Please enter a number between 1 and 5.");
+    }
+    delay(500);
+  }
 
-  // Save to Preferences (Non-Volatile Storage)
-  preferences.putString("wifi_ssid", ssid);
-  preferences.putString("wifi_pass", password);
-  preferences.putString("jira_host", jiraHost);
-  preferences.putString("jira_cred", base64Credentials);
-
-  Serial.println("\n--> All settings successfully saved! Restarting system...");
   lcd.clear();
   lcd.setCursor(0, 1); lcd.print("Data saved!");
   lcd.setCursor(0, 2); lcd.print("Restarting system...");
