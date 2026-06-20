@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.02";
+String VERSION = "v1.03";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -75,6 +75,7 @@ void handleT9Input(char key);
 void handleTracking(int index);
 void handleConfirmationInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
+void enterLowPowerMode();
 
 // Return the index of the keypad's key-to-task mapping
 int getKeyIndex(char key)
@@ -98,15 +99,10 @@ int getT9LayoutIndex(char key)
   return -1;
 }
 
-// Reset display sleep timer and turn backlight back on
+// Reset display sleep timer
 void resetDisplayTimeout()
 {
   lastActivityTime = millis();
-  if (!isDisplayOn) {
-    digitalWrite(BACKLIGHT_PIN, HIGH); 
-    isDisplayOn = true;
-    updateDefaultDisplay(); 
-  }
 }
 
 // Render the current UI state to the LCD
@@ -457,6 +453,47 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   http.end();
 }
 
+// Enter light sleep mode
+void enterLowPowerMode() 
+{
+  // Turn off LCD completely to stop power drain
+  lcd.clear();
+  digitalWrite(BACKLIGHT_PIN, LOW);
+  isDisplayOn = false;
+
+  // Reconfigure pins so that every key press leads to a wake-up
+  for (int i = 0; i < COLS; i++) {
+    pinMode(colPins[i], OUTPUT);
+    digitalWrite(colPins[i], LOW);
+  }
+  for (int i = 0; i < ROWS; i++) {
+    pinMode(rowPins[i], INPUT_PULLUP);
+    gpio_num_t rowPin = (gpio_num_t)rowPins[i];
+    gpio_wakeup_enable(rowPin, GPIO_INTR_LOW_LEVEL);
+  }
+  delay(1); 
+
+  esp_sleep_enable_gpio_wakeup();
+  esp_light_sleep_start();
+
+  // --- WOKEN UP FROM LIGHT SLEEP HERE ---
+  for (int i = 0; i < ROWS; i++) {
+    gpio_num_t rowPin = (gpio_num_t)rowPins[i];
+    gpio_wakeup_disable(rowPin);
+  }
+  
+  for (int i = 0; i < COLS; i++) {
+    pinMode(colPins[i], INPUT); 
+  }
+  for (int i = 0; i < ROWS; i++) {
+    pinMode(rowPins[i], INPUT); 
+  }
+  
+  digitalWrite(BACKLIGHT_PIN, HIGH);
+  resetDisplayTimeout();
+  updateDefaultDisplay();
+}
+
 void setup()
 {
   pinMode(BACKLIGHT_PIN, OUTPUT);
@@ -535,11 +572,10 @@ void loop()
   static unsigned long lastUpdateTime = 0;
 
   // Automatic display timeout (except in T9-entry mode, manual-entry mode and confirmation dialog)
-  if(isDisplayOn && configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 &&
-    (millis() - lastActivityTime > displayTimeout)) {
-    lcd.clear();
-    digitalWrite(BACKLIGHT_PIN, LOW); 
-    isDisplayOn = false;
+  if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 &&
+    (millis() - lastActivityTime > displayTimeout))
+  {
+    enterLowPowerMode();
   }
 
   // Handle character selection timeout inside T9 layout engine
@@ -552,9 +588,9 @@ void loop()
   // Fills customKeypad.key[] array with up-to 10 active keys. Returns true if there are ANY active keys.
   if(customKeypad.getKeys())
   {
-    // Wake display up on any keystroke detection event
+    // Catch the first keystroke event after the display was off / sleep
     if(!isDisplayOn) {
-      resetDisplayTimeout();
+      isDisplayOn = true;
       return;
     }
     resetDisplayTimeout(); 
@@ -632,8 +668,8 @@ void loop()
     }
   }
 
-  // Update display every 4 seconds (Jira ID Overview)
-  if(isDisplayOn && activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
+  // Refresh interval tick loop for Idle Jira Matrix Grid views (4-second cycle)
+  if(activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
     confirmTrackingIndex == -1 && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
@@ -642,7 +678,7 @@ void loop()
   }
 
   // Update live counter seconds for running timer
-  if(isDisplayOn && activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
+  if(activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
     confirmTrackingIndex == -1)
   {
     static unsigned long lastSecUpdate = 0;
