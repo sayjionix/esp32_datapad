@@ -116,7 +116,7 @@ void updateDefaultDisplay()
   {
     // Show real task name, if available
     lcd.setCursor(0, 0);
-    String displayName = taskMapping[activeTimerIndex];
+    String displayName = taskMapping[activeTimerIndex] + " (Key " + String(customKeypad.key[0].kchar) + ")";
     lcd.print(displayName);
     lcd.setCursor(0, 1);
     displayName = taskNames[activeTimerIndex];
