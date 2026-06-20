@@ -18,6 +18,7 @@ String ssid = "";
 String password = "";
 String jiraHost = ""; 
 String base64Credentials = ""; 
+unsigned long maxTimerHours = 10; // Default maximum tracking duration in hours
 
 unsigned long lastActivityTime = 0;
 const unsigned long displayTimeout = 60000; 
@@ -175,6 +176,7 @@ void runSerialSetup()
   password = preferences.getString("wifi_pass", "");
   jiraHost = preferences.getString("jira_host", "");
   base64Credentials = preferences.getString("jira_cred", "");
+  maxTimerHours = preferences.getUInt("max_hours", 10);
 
   while (true) {
     Serial.println("\n==================================================");
@@ -184,10 +186,11 @@ void runSerialSetup()
     Serial.print("2. WiFi Password:            "); Serial.println(password == "" ? "[NOT SET]" : "********");
     Serial.print("3. Jira-Host:                "); Serial.println(jiraHost == "" ? "[NOT SET]" : jiraHost);
     Serial.print("4. Base64 Credentials:       "); Serial.println(base64Credentials == "" ? "[NOT SET]" : "[SAVED]");
+    Serial.print("5. Max Timer Duration:       "); Serial.print(maxTimerHours); Serial.println(" Hours");
     Serial.println("--------------------------------------------------");
-    Serial.println("5. Save & Restart System");
+    Serial.println("6. Save & Restart System");
     Serial.println("==================================================");
-    Serial.print("Please select an option (1-5): ");
+    Serial.print("Please select an option (1-6): ");
 
     String choice = readSerialLine();
     Serial.println(choice);
@@ -221,11 +224,24 @@ void runSerialSetup()
       Serial.println("--> Base64 Credentials updated in storage.");
     } 
     else if (choice == "5") {
+      Serial.print("Enter max timer duration (in hours): ");
+      String hrsInput = readSerialLine();
+      long parsedHrs = hrsInput.toInt();
+      if (parsedHrs > 0) {
+        maxTimerHours = parsedHrs;
+        Serial.print(maxTimerHours); Serial.println(" Hours");
+        preferences.putUInt("max_hours", maxTimerHours);
+        Serial.println("--> Max timer duration updated in storage.");
+      } else {
+        Serial.println("Invalid input! Must be a positive number.");
+      }
+    } 
+    else if (choice == "6") {
       Serial.println("\n--> All settings successfully verified! Restarting system...");
       break;
     } 
     else {
-      Serial.println("Invalid selection! Please enter a number between 1 and 5.");
+      Serial.println("Invalid selection! Please enter a number between 1 and 6.");
     }
     delay(500);
   }
@@ -557,6 +573,7 @@ void setup()
   password = preferences.getString("wifi_pass", "");
   jiraHost = preferences.getString("jira_host", "");
   base64Credentials = preferences.getString("jira_cred", "");
+  maxTimerHours = preferences.getUInt("max_hours", 10); // Load max hours from NVS (defaults to 10 if not set)
 
   // Fall back to configuration mode if credentials are empty
   if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
@@ -714,17 +731,40 @@ void loop()
   if(activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
     confirmTrackingIndex == -1)
   {
-    static unsigned long lastSecUpdate = 0;
-    if (millis() - lastSecUpdate > 1000) {
-      lastSecUpdate = millis();
-      unsigned long totalSecs = (millis() - startTimes[activeTimerIndex]) / 1000;
-      unsigned long mins = totalSecs / 60;
-      unsigned long secs = totalSecs % 60;
+    unsigned long elapsedMillis = millis() - startTimes[activeTimerIndex];
+    unsigned long maxAllowedMillis = maxTimerHours * 3600000;
+
+    // Force automatic timeout submission if max configuration threshold is hit
+    if (elapsedMillis >= maxAllowedMillis) {
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Limit reached! (" + String(maxTimerHours) + "h)");
+      lcd.setCursor(0, 1); lcd.print("Auto-logging task...");
+      lcd.setCursor(0, 2); lcd.print(taskMapping[activeTimerIndex]);
       
-      lcd.setCursor(0, 2);
-      char timeBuf[21];
-      sprintf(timeBuf, "Running: %02lu:%02lu      ", mins, secs);
-      lcd.print(timeBuf);
+      if (WiFi.status() == WL_CONNECTED) {
+        logTimeToJira(taskMapping[activeTimerIndex].c_str(), maxTimerHours * 60);
+      } else {
+        lcd.setCursor(0, 3); lcd.print("WiFi Err, Log lost!");
+        delay(3000);
+      }
+      
+      startTimes[activeTimerIndex] = 0;
+      activeTimerIndex = -1;
+      updateDefaultDisplay();
+    } 
+    else {
+      static unsigned long lastSecUpdate = 0;
+      if (millis() - lastSecUpdate > 1000) {
+        lastSecUpdate = millis();
+        unsigned long totalSecs = elapsedMillis / 1000;
+        unsigned long mins = totalSecs / 60;
+        unsigned long secs = totalSecs % 60;
+        
+        lcd.setCursor(0, 2);
+        char timeBuf[21];
+        sprintf(timeBuf, "Running: %02lu:%02lu      ", mins, secs);
+        lcd.print(timeBuf);
+      }
     }
   }
   delay(10);
