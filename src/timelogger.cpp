@@ -69,6 +69,10 @@ int confirmTrackingIndex = -1;
 unsigned long confirmDurationMinutes = 0;
 int nextTimerIndexToStart = -1;
 
+// Variables for slot deletion
+int deleteIndex = -1;
+bool isShowingDeleteDialog = false;
+
 String currentInput = "";
 char lastT9Key = '\0';
 int t9CycleIndex = 0;
@@ -88,6 +92,7 @@ void handleManualTimeInput(char key);
 void handleT9Input(char key);
 void handleTracking(int index);
 void handleConfirmationInput(char key);
+void handleDeletionInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
 void enterLowPowerMode();
 
@@ -141,8 +146,8 @@ void resetDisplayTimeout()
 // Render the current UI state to the LCD
 void updateDefaultDisplay()
 {
-  // Block redraw requests if user is reading the info page
-  if (isShowingInfoPage) return;
+  // Block redraw requests if user is reading the info page or delete dialog
+  if (isShowingInfoPage || isShowingDeleteDialog) return;
 
   lcd.clear();
   
@@ -535,6 +540,45 @@ void handleConfirmationInput(char key)
   }
 }
 
+// Handle user response inside the slot deletion dialog window
+void handleDeletionInput(char key)
+{
+  if (key == 'C') { // Enter=Yes -> Confirm deletion
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Deleting Slot...");
+    lcd.setCursor(0, 1); lcd.print("Task " + String(deleteIndex + 1));
+
+    // If the active timer is running on this specific slot, stop it first
+    if (activeTimerIndex == deleteIndex) {
+      startTimes[activeTimerIndex] = 0;
+      activeTimerIndex = -1;
+    }
+
+    // Reset RAM values
+    taskMapping[deleteIndex] = "*****-*****";
+    taskNames[deleteIndex] = "Task " + String(deleteIndex + 1);
+
+    // Reset NVS values
+    String keyName = "task_" + String(deleteIndex);
+    String titleName = "name_" + String(deleteIndex);
+    preferences.putString(keyName.c_str(), "*****-*****");
+    preferences.putString(titleName.c_str(), "Task " + String(deleteIndex + 1));
+
+    delay(1500);
+    isShowingDeleteDialog = false;
+    deleteIndex = -1;
+    updateDefaultDisplay();
+  }
+  else if (key == 'B') { // Cancel=No -> Abort deletion
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Deletion aborted");
+    delay(1500);
+    isShowingDeleteDialog = false;
+    deleteIndex = -1;
+    updateDefaultDisplay();
+  }
+}
+
 // Assemble JSON payload and execute POST request to Jira REST API endpoint
 void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
@@ -677,11 +721,12 @@ void loop()
 {
   bool isShiftPressed = false;
   bool isAPressed = false;
+  bool isCancelPressed = false;
   static unsigned long lastUpdateTime = 0;
 
-  // Automatic display timeout (except in sub-menus, editor modes, or info page)
-  if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 && !isShowingInfoPage &&
-    (millis() - lastActivityTime > displayTimeout))
+  // Automatic display timeout (except in sub-menus, editor modes, or dialogs)
+  if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 && 
+     !isShowingInfoPage && !isShowingDeleteDialog && (millis() - lastActivityTime > displayTimeout))
   {
     enterLowPowerMode();
   }
@@ -722,6 +767,13 @@ void loop()
       }
       return;
     }
+
+    if (isShowingDeleteDialog) {
+      if (firstState == PRESSED) {
+        handleDeletionInput(firstKey);
+      }
+      return;
+    }
     
     if (configIndex != -1) {
       if (firstState == PRESSED) {
@@ -737,15 +789,18 @@ void loop()
       return;
     }
 
-    // Check if 'S' (Shift) or 'A' is active on the first key position
+    // Check if modifiers are active on the first key position
     if(firstKey == 'S' && (firstState == PRESSED || firstState == HOLD)) {
       isShiftPressed = true;
     }
     else if(firstKey == 'A' && (firstState == PRESSED || firstState == HOLD)) {
       isAPressed = true;
     }
+    else if(firstKey == 'B' && (firstState == PRESSED || firstState == HOLD)) {
+      isCancelPressed = true;
+    }
     else {
-      // Single Key Action (No Shift, No 'A')
+      // Single Key Action (No Shift, No 'A', No 'B')
       int taskidx = getKeyIndex(firstKey);
       if(firstState == PRESSED && taskidx != -1) {
         handleTracking(taskidx);
@@ -787,6 +842,7 @@ void loop()
         lcd.setCursor(0, 1); lcd.print("Task " + String(taskidx+1) + " -> Jira ID");
         lcd.setCursor(0, 2); lcd.print("Entry: ");
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
+        return;
       }
 
       // Action 'A' + Task Key combination -> Switch into Direct Manual Minute Input Mode
@@ -808,13 +864,35 @@ void loop()
           lcd.setCursor(0, 2); lcd.print("Minutes: ");
           lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=Log");
         }
+        return;
+      }
+
+      // Cancel ('B') + Task Key combination -> Trigger Slot Deletion Dialog
+      if(isCancelPressed && taskidx != -1) {
+        if (taskMapping[taskidx] == "*****-*****") {
+          // Slot already empty, nothing to do
+          lcd.clear();
+          lcd.setCursor(0, 1); lcd.print(" Slot already empty ");
+          delay(1200);
+          updateDefaultDisplay();
+        } else {
+          deleteIndex = taskidx;
+          isShowingDeleteDialog = true;
+          
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Clear Task " + String(taskidx + 1) + "?");
+          lcd.setCursor(0, 1); lcd.print(taskMapping[deleteIndex]);
+          lcd.setCursor(0, 2); lcd.print("Reset to empty slot?");
+          lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
+        }
+        return;
       }
     }
   }
 
   // Refresh interval tick loop for Idle Jira Matrix Grid views (4-second cycle)
   if(activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1 && !isShowingInfoPage && ((millis() - lastUpdateTime) > 4000))
+    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
     displayNameToggle = !displayNameToggle;
@@ -823,7 +901,7 @@ void loop()
 
   // Update live counter seconds for running timer
   if(activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1 && !isShowingInfoPage)
+    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog)
   {
     unsigned long elapsedMillis = millis() - startTimes[activeTimerIndex];
     unsigned long maxAllowedMillis = maxTimerHours * 3600000;
