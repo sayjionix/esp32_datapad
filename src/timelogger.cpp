@@ -151,11 +151,7 @@ void updateDefaultDisplay()
   {
     // Show real task name (if available) and associated key
     lcd.setCursor(0, 0);
-    String keyName = " ";
-    if(customKeypad.key[0].kchar != 'A' && customKeypad.key[0].kchar != 'B' && customKeypad.key[0].kchar != 'C') {
-      keyName = " (Key " + String(customKeypad.key[0].kchar) + ")";
-    }
-    String displayName = taskMapping[activeTimerIndex] + keyName;
+    String displayName = taskMapping[activeTimerIndex] + " (Task " + (activeTimerIndex+1) + ")";
     lcd.print(displayName);
     lcd.setCursor(0, 1);
     displayName = taskNames[activeTimerIndex];
@@ -788,7 +784,7 @@ void loop()
         
         lcd.clear();
         lcd.setCursor(0, 0); lcd.print("Enter Jira Task ID!");
-        lcd.setCursor(0, 1); lcd.print("Key " + String(secondKey) + " -> Jira ID");
+        lcd.setCursor(0, 1); lcd.print("Task " + String(taskidx+1) + " -> Jira ID");
         lcd.setCursor(0, 2); lcd.print("Entry: ");
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
       }
