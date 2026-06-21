@@ -885,7 +885,8 @@ void loop()
           lcd.setCursor(0, 2); lcd.print("Reset to empty slot?");
           lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
 
-          // Inline-Wait: Solange blockieren, bis der Nutzer die Tasten wieder losgelassen hat
+          // Inline-Wait until keys are released
+          delay(500);
           while(customKeypad.getKeys()) {
             delay(20);
           }
