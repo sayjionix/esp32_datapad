@@ -11,7 +11,19 @@ String VERSION = "v1.03";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
-const int BACKLIGHT_PIN = 4;
+#define BACKLIGHT_PIN  4    // GPIO4
+#define BAT_ADC_PIN    6    // GPIO6 (Battery)
+#define PWR_ADC_PIN    5    // GPIO5 (External power)
+
+#define ADC_RESOLUTION 4095.0
+#define ADC_REF        3.3
+
+// Correct ratios from schematic
+#define BAT_DIVIDER_RATIO  4.1333
+#define PWR_DIVIDER_RATIO  5.6808
+
+// 5V through divider gives ~880mV at ADC, anything above 400mV means external power present
+#define PWR_PRESENT_THRESHOLD 400
 
 // WiFi and Jira configuration variables
 String ssid = "";
@@ -24,6 +36,7 @@ unsigned long lastActivityTime = 0;
 const unsigned long displayTimeout = 60000; 
 bool isDisplayOn = true;
 bool displayNameToggle = true;
+bool isShowingInfoPage = false; // Flag to block UI drawing while showing version info
 
 // Keypad Definition (rows and cols are inverted here to match anti-ghosting diode polarity with library code)
 const byte ROWS = 4; 
@@ -78,6 +91,25 @@ void handleConfirmationInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
 void enterLowPowerMode();
 
+// Read battery voltage
+float readBatVoltage()
+{
+  uint32_t adcRaw = analogRead(BAT_ADC_PIN);
+
+  float adcVoltage = (adcRaw / ADC_RESOLUTION) * ADC_REF;
+  float realVoltage = adcVoltage * BAT_DIVIDER_RATIO;
+
+  return realVoltage;
+}
+
+// Check for external power via USB
+bool externalPowerPresent()
+{
+  uint32_t adcRaw = analogRead(PWR_ADC_PIN);
+  float adcVoltage = (adcRaw / ADC_RESOLUTION) * ADC_REF;
+  return (((uint16_t)(adcVoltage * 1000.0)) > PWR_PRESENT_THRESHOLD);
+}
+
 // Return the index of the keypad's key-to-task mapping
 int getKeyIndex(char key)
 {
@@ -109,14 +141,21 @@ void resetDisplayTimeout()
 // Render the current UI state to the LCD
 void updateDefaultDisplay()
 {
+  // Block redraw requests if user is reading the info page
+  if (isShowingInfoPage) return;
+
   lcd.clear();
   
   // There is an active timer running
   if(activeTimerIndex != -1)
   {
-    // Show real task name, if available
+    // Show real task name (if available) and associated key
     lcd.setCursor(0, 0);
-    String displayName = taskMapping[activeTimerIndex] + " (Key " + String(customKeypad.key[0].kchar) + ")";
+    String keyName = " ";
+    if(customKeypad.key[0].kchar != 'A' && customKeypad.key[0].kchar != 'B' && customKeypad.key[0].kchar != 'C') {
+      keyName = " (Key " + String(customKeypad.key[0].kchar) + ")";
+    }
+    String displayName = taskMapping[activeTimerIndex] + keyName;
     lcd.print(displayName);
     lcd.setCursor(0, 1);
     displayName = taskNames[activeTimerIndex];
@@ -563,6 +602,8 @@ void setup()
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("Datapad " + VERSION + " boot..");
 
+  analogReadResolution(12); // Set ADC to 12bit
+
   Serial.begin(115200);
   delay(2000); // Wait for USB-Serial controller to initialize after a power-cycle
 
@@ -632,8 +673,8 @@ void loop()
   bool isAPressed = false;
   static unsigned long lastUpdateTime = 0;
 
-  // Automatic display timeout (except in T9-entry mode, manual-entry mode and confirmation dialog)
-  if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 &&
+  // Automatic display timeout (except in sub-menus, editor modes, or info page)
+  if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 && !isShowingInfoPage &&
     (millis() - lastActivityTime > displayTimeout))
   {
     enterLowPowerMode();
@@ -659,6 +700,15 @@ void loop()
     // EVALUATE FIRST KEY
     char firstKey = customKeypad.key[0].kchar;
     KeyState firstState = customKeypad.key[0].kstate;
+
+    // Inside Info-Page: Press Enter ('C') or Cancel ('B') to exit
+    if (isShowingInfoPage) {
+      if (firstState == PRESSED && (firstKey == 'C' || firstKey == 'B')) {
+        isShowingInfoPage = false;
+        updateDefaultDisplay();
+      }
+      return;
+    }
 
     if (confirmTrackingIndex != -1) {
       if (firstState == PRESSED) {
@@ -696,11 +746,29 @@ void loop()
       }
     }
     
-    // Evaluate multi-key state (Shift + Task-Key or A + Task-Key)
+    // Evaluate multi-key state combos
     if(customKeypad.key[1].kchar != NO_KEY && 
       (customKeypad.key[1].kstate == PRESSED || customKeypad.key[1].kstate == HOLD))
     {
-      int taskidx = getKeyIndex(customKeypad.key[1].kchar);
+      char secondKey = customKeypad.key[1].kchar;
+      int taskidx = getKeyIndex(secondKey);
+
+      // Shift ('S') + Cancel ('B') combo -> Show Info Page
+      if(isShiftPressed && secondKey == 'B') {
+        isShowingInfoPage = true;
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Datapad FW: " + VERSION);
+        lcd.setCursor(0, 1); lcd.print("(c) syjnx, 2026");
+        if(externalPowerPresent()) {
+          lcd.setCursor(0, 2); lcd.print("USB connected");
+        }
+        else {
+          lcd.setCursor(0, 2); lcd.print("Vbat = ");
+          lcd.setCursor(7, 2); lcd.print(readBatVoltage(), 3);
+        }
+        lcd.setCursor(0, 3); lcd.print("Cancel/Enter to exit");
+        return;
+      }
 
       // Shift + Task Key combination -> Switch into T9 Setup Editor Mode
       if(isShiftPressed && taskidx != -1) {
@@ -710,7 +778,7 @@ void loop()
         
         lcd.clear();
         lcd.setCursor(0, 0); lcd.print("Enter Jira Task ID!");
-        lcd.setCursor(0, 1); lcd.print("Key " + String(customKeypad.key[1].kchar) + " -> Jira ID");
+        lcd.setCursor(0, 1); lcd.print("Key " + String(secondKey) + " -> Jira ID");
         lcd.setCursor(0, 2); lcd.print("Entry: ");
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
       }
@@ -731,7 +799,7 @@ void loop()
 
   // Refresh interval tick loop for Idle Jira Matrix Grid views (4-second cycle)
   if(activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1 && ((millis() - lastUpdateTime) > 4000))
+    confirmTrackingIndex == -1 && !isShowingInfoPage && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
     displayNameToggle = !displayNameToggle;
@@ -740,7 +808,7 @@ void loop()
 
   // Update live counter seconds for running timer
   if(activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1)
+    confirmTrackingIndex == -1 && !isShowingInfoPage)
   {
     unsigned long elapsedMillis = millis() - startTimes[activeTimerIndex];
     unsigned long maxAllowedMillis = maxTimerHours * 3600000;
