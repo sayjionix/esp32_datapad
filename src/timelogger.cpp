@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.03";
+String VERSION = "v1.05";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -80,7 +80,7 @@ unsigned long lastT9Time = 0;
 const unsigned long t9Timeout = 1200;
 
 const String t9Chars[11] = {
-  "1", "ABC2", "DEF3", "GHI4", "JKL5", "MNO6", "PQRS7", "TUV8", "WXYZ9", "0 ", "-"
+  "1", "ABC2", "DEF3", "GHI4", "JKL5", "MNO6", "PQRS7", "TUV8", "WXYZ9", "0", "-"
 };
 
 void resetDisplayTimeout();
@@ -747,7 +747,7 @@ void loop()
       return;
     }
     resetDisplayTimeout(); 
-    
+
     // EVALUATE FIRST KEY
     char firstKey = customKeypad.key[0].kchar;
     KeyState firstState = customKeypad.key[0].kstate;
@@ -838,8 +838,8 @@ void loop()
         lastT9Key = '\0';
         
         lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("Enter Jira Task ID!");
-        lcd.setCursor(0, 1); lcd.print("Task " + String(taskidx+1) + " -> Jira ID");
+        lcd.setCursor(0, 0); lcd.print("Enter Jira Task ID");
+        lcd.setCursor(0, 1); lcd.print("for Task " + String(taskidx+1));
         lcd.setCursor(0, 2); lcd.print("Entry: ");
         lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=OK");
         return;
@@ -884,6 +884,11 @@ void loop()
           lcd.setCursor(0, 1); lcd.print(taskMapping[deleteIndex]);
           lcd.setCursor(0, 2); lcd.print("Reset to empty slot?");
           lcd.setCursor(0, 3); lcd.print("Cancel=No Enter=Yes");
+
+          // Inline-Wait: Solange blockieren, bis der Nutzer die Tasten wieder losgelassen hat
+          while(customKeypad.getKeys()) {
+            delay(20);
+          }
         }
         return;
       }
