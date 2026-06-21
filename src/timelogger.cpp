@@ -444,6 +444,16 @@ void handleT9Input(char key)
 // Logic hook for starting or prompting to log timers
 void handleTracking(int index)
 {
+  // Block action completely if the slot hasn't been configured yet
+  if (taskMapping[index] == "*****-*****") {
+    lcd.clear();
+    lcd.setCursor(0, 1); lcd.print("    Slot empty!     ");
+    lcd.setCursor(0, 2); lcd.print("Program Task first. ");
+    delay(1500);
+    updateDefaultDisplay();
+    return;
+  }
+
   // Case 1: A timer was running for the actual task -> open stop-confirmation prompt
   if(startTimes[index] != 0) {
     confirmDurationMinutes = (millis() - startTimes[index]) / 60000;
@@ -785,14 +795,23 @@ void loop()
 
       // Action 'A' + Task Key combination -> Switch into Direct Manual Minute Input Mode
       if(isAPressed && taskidx != -1) {
-        manualTimeIndex = taskidx;
-        currentInput = "";
-        
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("Manual entry for:");
-        lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
-        lcd.setCursor(0, 2); lcd.print("Minutes: ");
-        lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=Log");
+        // Block manual entry completely if the slot hasn't been configured yet
+        if (taskMapping[taskidx] == "*****-*****") {
+          lcd.clear();
+          lcd.setCursor(0, 1); lcd.print(" No Task programmed ");
+          lcd.setCursor(0, 2); lcd.print("  Cannot log time   ");
+          delay(1500);
+          updateDefaultDisplay();
+        } else {
+          manualTimeIndex = taskidx;
+          currentInput = "";
+          
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Manual entry for:");
+          lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex]);
+          lcd.setCursor(0, 2); lcd.print("Minutes: ");
+          lcd.setCursor(0, 3); lcd.print("Cancel=Del Enter=Log");
+        }
       }
     }
   }
