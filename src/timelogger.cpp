@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.05";
+String VERSION = "v1.06";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -28,6 +28,8 @@ LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 // WiFi and Jira configuration variables
 String ssid = "";
 String password = "";
+String ssid2 = "";
+String password2 = "";
 String jiraHost = ""; 
 String base64Credentials = ""; 
 unsigned long maxTimerHours = 10; // Default maximum tracking duration in hours
@@ -95,6 +97,7 @@ void handleConfirmationInput(char key);
 void handleDeletionInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
 void enterLowPowerMode();
+bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* label);
 
 // Read battery voltage
 float readBatVoltage()
@@ -225,6 +228,8 @@ void runSerialSetup()
   // Load existing values first so they are up to date in the menu
   ssid = preferences.getString("wifi_ssid", "");
   password = preferences.getString("wifi_pass", "");
+  ssid2 = preferences.getString("wifi_ssid2", "");
+  password2 = preferences.getString("wifi_pass2", "");
   jiraHost = preferences.getString("jira_host", "");
   base64Credentials = preferences.getString("jira_cred", "");
   maxTimerHours = preferences.getUInt("max_hours", 10);
@@ -233,48 +238,64 @@ void runSerialSetup()
     Serial.println("\n==================================================");
     Serial.println("         CONFIGURATION OF TIME TRACKER            ");
     Serial.println("==================================================");
-    Serial.print("1. WiFi Name (SSID):         "); Serial.println(ssid == "" ? "[NOT SET]" : ssid);
-    Serial.print("2. WiFi Password:            "); Serial.println(password == "" ? "[NOT SET]" : "********");
-    Serial.print("3. Jira-Host:                "); Serial.println(jiraHost == "" ? "[NOT SET]" : jiraHost);
-    Serial.print("4. Base64 Credentials:       "); Serial.println(base64Credentials == "" ? "[NOT SET]" : "[SAVED]");
-    Serial.print("5. Max Timer Duration:       "); Serial.print(maxTimerHours); Serial.println(" Hours");
+    Serial.print("1. WiFi 1 Name (SSID):       "); Serial.println(ssid == "" ? "[NOT SET]" : ssid);
+    Serial.print("2. WiFi 1 Password:          "); Serial.println(password == "" ? "[NOT SET]" : "********");
+    Serial.print("3. WiFi 2 Name (SSID):       "); Serial.println(ssid2 == "" ? "[NOT SET (OPTIONAL)]" : ssid2);
+    Serial.print("4. WiFi 2 Password:          "); Serial.println(password2 == "" ? "[NOT SET]" : "********");
+    Serial.print("5. Jira-Host:                "); Serial.println(jiraHost == "" ? "[NOT SET]" : jiraHost);
+    Serial.print("6. Base64 Credentials:       "); Serial.println(base64Credentials == "" ? "[NOT SET]" : "[SAVED]");
+    Serial.print("7. Max Timer Duration:       "); Serial.print(maxTimerHours); Serial.println(" Hours");
     Serial.println("--------------------------------------------------");
-    Serial.println("6. Restart System");
+    Serial.println("8. Restart System");
     Serial.println("==================================================");
-    Serial.print("Please select an option (1-6): ");
+    Serial.print("Please select an option (1-8): ");
 
     String choice = readSerialLine();
     Serial.println(choice);
 
     if (choice == "1") {
-      Serial.print("Enter new WiFi Name (SSID): ");
+      Serial.print("Enter new WiFi 1 Name (SSID): ");
       ssid = readSerialLine();
       Serial.println(ssid);
       preferences.putString("wifi_ssid", ssid);
-      Serial.println("--> WiFi Name updated in storage.");
+      Serial.println("--> WiFi 1 Name updated in storage.");
     } 
     else if (choice == "2") {
-      Serial.print("Enter new WiFi Password: ");
+      Serial.print("Enter new WiFi 1 Password: ");
       password = readSerialLine();
       Serial.println("********");
       preferences.putString("wifi_pass", password);
-      Serial.println("--> WiFi Password updated in storage.");
+      Serial.println("--> WiFi 1 Password updated in storage.");
     } 
     else if (choice == "3") {
+      Serial.print("Enter new WiFi 2 Name (SSID): ");
+      ssid2 = readSerialLine();
+      Serial.println(ssid2);
+      preferences.putString("wifi_ssid2", ssid2);
+      Serial.println("--> WiFi 2 Name updated in storage.");
+    }
+    else if (choice == "4") {
+      Serial.print("Enter new WiFi 2 Password: ");
+      password2 = readSerialLine();
+      Serial.println("********");
+      preferences.putString("wifi_pass2", password2);
+      Serial.println("--> WiFi 2 Password updated in storage.");
+    }
+    else if (choice == "5") {
       Serial.print("Enter new Jira-Host (e.g. company.atlassian.net): ");
       jiraHost = readSerialLine();
       Serial.println(jiraHost);
       preferences.putString("jira_host", jiraHost);
       Serial.println("--> Jira-Host updated in storage.");
     } 
-    else if (choice == "4") {
+    else if (choice == "6") {
       Serial.print("Enter new Base64 Credentials: ");
       base64Credentials = readSerialLine();
       Serial.println("[SAVED]");
       preferences.putString("jira_cred", base64Credentials);
       Serial.println("--> Base64 Credentials updated in storage.");
     } 
-    else if (choice == "5") {
+    else if (choice == "7") {
       Serial.print("Enter max timer duration (in hours): ");
       String hrsInput = readSerialLine();
       long parsedHrs = hrsInput.toInt();
@@ -287,12 +308,12 @@ void runSerialSetup()
         Serial.println("Invalid input! Must be a positive number.");
       }
     } 
-    else if (choice == "6") {
+    else if (choice == "8") {
       Serial.println("\n--> All settings successfully verified! Restarting system...");
       break;
     } 
     else {
-      Serial.print("Invalid selection! You entered '"); Serial.print(choice); Serial.println("'. Please enter a number between 1 and 6.");
+      Serial.print("Invalid selection! You entered '"); Serial.print(choice); Serial.println("'. Please enter a number between 1 and 8.");
     }
     delay(500);
   }
@@ -643,6 +664,33 @@ void enterLowPowerMode()
   updateDefaultDisplay();
 }
 
+// Helper function to handle a single connection routine
+bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* label)
+{
+  if (targetSsid == "") return false;
+
+  lcd.setCursor(0, 1); 
+  lcd.print("Connecting " + String(label) + "..  ");
+  
+  // Clean up any ongoing connection attempt before starting a new one
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.begin(targetSsid.c_str(), targetPass.c_str());
+  
+  int wifiTimeoutCounter = 0;
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+    wifiTimeoutCounter++;
+    if (wifiTimeoutCounter > 30) { // Timeout reached after ~15s
+      Serial.println("\nTimeout on " + String(label));
+      return false;
+    }
+  }
+  Serial.println("\nConnected to " + String(label));
+  return true;
+}
+
 void setup()
 {
   pinMode(BACKLIGHT_PIN, OUTPUT);
@@ -670,14 +718,16 @@ void setup()
     runSerialSetup();
   }
 
-  // Load WiFi and Jira access data from non-volatile preferences
+  // Load WiFi (1 & 2) and Jira access data from non-volatile preferences
   ssid = preferences.getString("wifi_ssid", "");
   password = preferences.getString("wifi_pass", "");
+  ssid2 = preferences.getString("wifi_ssid2", "");
+  password2 = preferences.getString("wifi_pass2", "");
   jiraHost = preferences.getString("jira_host", "");
   base64Credentials = preferences.getString("jira_cred", "");
   maxTimerHours = preferences.getUInt("max_hours", 10); // Load max hours from NVS (defaults to 10 if not set)
 
-  // Fall back to configuration mode if credentials are empty
+  // Fall back to configuration mode if primary credentials are empty
   if (ssid == "" || password == "" || jiraHost == "" || base64Credentials == "") {
     runSerialSetup();
   }
@@ -693,24 +743,25 @@ void setup()
   customKeypad.setHoldTime(500);
   customKeypad.setDebounceTime(50);
 
-  // Connect to WiFi
-  lcd.setCursor(0, 1); lcd.print("Connecting to WiFi..");
-  WiFi.begin(ssid.c_str(), password.c_str());
+  // --- CONNECT TO WIFI ---
+  bool connected = false;
   
-  // WiFi Timeout
-  int wifiTimeoutCounter = 0;
-  while (WiFi.status() != WL_CONNECTED) { 
-    delay(500); 
-    Serial.print("."); 
-    wifiTimeoutCounter++;
-    if (wifiTimeoutCounter > 30) { // Timeout reached after roughly 15s -> abort and restart node
-      Serial.println("\nError establishing WiFi connection! Restarting...");
-      lcd.setCursor(0, 1); lcd.print("WiFi Error!         ");
-      lcd.setCursor(0, 2); lcd.print("Hold Shift + Enter  ");
-      lcd.setCursor(0, 3); lcd.print("to enter Setup Mode ");
-      delay(3000);
-      ESP.restart();
-    }
+  // Try WiFi 1 first
+  connected = connectToWiFiNetwork(ssid, password, "WiFi 1");
+  
+  // If WiFi 1 fails, try WiFi 2 (if configured)
+  if (!connected && ssid2 != "") {
+    connected = connectToWiFiNetwork(ssid2, password2, "WiFi 2");
+  }
+
+  // If both failed -> abort and restart node
+  if (!connected) {
+    Serial.println("Error establishing any WiFi connection! Restarting...");
+    lcd.setCursor(0, 1); lcd.print("WiFi Error!         ");
+    lcd.setCursor(0, 2); lcd.print("Hold Shift + Enter  ");
+    lcd.setCursor(0, 3); lcd.print("to enter Setup Mode ");
+    delay(3000);
+    ESP.restart();
   }
   
   resetDisplayTimeout();
