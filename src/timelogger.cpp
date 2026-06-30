@@ -683,8 +683,9 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   long tzHours = tzOffsetSeconds / 3600;
   long tzMins = (tzOffsetSeconds % 3600) / 60;
 
+  // REMOVED THE COLON BETWEEN %02ld AND %02ld TO MATCH JIRA'S EXPECTED "Z" (e.g., +0100)
   char timestampBuf[35];
-  sprintf(timestampBuf, "%s%c%02ld:%02ld", baseTime, tzSign, tzHours, tzMins);
+  sprintf(timestampBuf, "%s%c%02ld%02ld", baseTime, tzSign, tzHours, tzMins);
 
   // Assemble the explicit structural payload
   String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
