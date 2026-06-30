@@ -5,9 +5,10 @@
 #include <Preferences.h>
 #include <LiquidCrystal.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 Preferences preferences;
-String VERSION = "v1.08";
+String VERSION = "v1.09";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -641,7 +642,22 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
 
-  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", \"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
+  // Calculate task starting time
+  time_t now = time(nullptr);
+  time_t startTime = now - (minutes * 60);
+  struct tm timeinfo;
+  localtime_r(&startTime, &timeinfo);
+
+  // ISO 8601 Format: YYYY-MM-DDTHH:MM:SS.000+ZZZZ
+  char timestampBuf[30];
+  // %z gets the timezone offset in the format +HHMM or -HHMM. Jira needs +HHMM.
+  strftime(timestampBuf, sizeof(timestampBuf), "%Y-%m-%dT%H:%M:%S.000%z", &timeinfo);
+
+  // Compose Payload
+  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
+                       "\"started\": \"" + String(timestampBuf) + "\", "
+                       "\"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
+  
   int httpResponseCode = http.POST(jsonPayload);
   
   lcd.setCursor(0, 2);
@@ -823,6 +839,18 @@ void setup()
     lcd.setCursor(0, 3); lcd.print("to enter Setup Mode ");
     delay(3000);
     ESP.restart();
+  }
+
+  // NTP Time-Sync
+  lcd.setCursor(0, 2); lcd.print("Syncing Time (NTP)..");
+  // Configure timezone for Germany (with daylight saving)
+  configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
+  
+  // Load time from NTP (Timeout after 5 sec)
+  int ntpTimeout = 0;
+  while (time(nullptr) < 100000 && ntpTimeout < 10) {
+    delay(500);
+    ntpTimeout++;
   }
   
   resetDisplayTimeout();
