@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.06";
+String VERSION = "v1.07";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -98,6 +98,7 @@ void handleDeletionInput(char key);
 void logTimeToJira(const char* issueKey, unsigned long minutes);
 void enterLowPowerMode();
 bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* label);
+bool ensureWiFiConnected();
 
 // Read battery voltage
 float readBatVoltage()
@@ -328,7 +329,7 @@ void runSerialSetup()
 // Fetch the issue summary title string from Jira REST API
 String fetchTaskSummary(String issueKey)
 {
-  if (WiFi.status() != WL_CONNECTED) return "No WiFi!";
+  if (!ensureWiFiConnected()) return "No WiFi!";
   WiFiClientSecure client;
   client.setInsecure(); // Skip SSL certificate verification for simplicity
   HTTPClient http;
@@ -364,7 +365,7 @@ void handleManualTimeInput(char key)
       if (minutes > 0) {
         lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
         lcd.setCursor(0, 1); lcd.print(taskMapping[manualTimeIndex] + ": " + String(minutes) + "m");
-        if (WiFi.status() == WL_CONNECTED) {
+        if (ensureWiFiConnected()) {
           logTimeToJira(taskMapping[manualTimeIndex].c_str(), minutes);
         } else {
           lcd.setCursor(0, 2); lcd.print("WiFi Error!");
@@ -522,7 +523,7 @@ void handleConfirmationInput(char key)
   if (key == 'C') { // Log to Jira (Enter=Yes)
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Sending to Jira...");
-    if (WiFi.status() == WL_CONNECTED) {
+    if (ensureWiFiConnected()) {
       logTimeToJira(taskMapping[confirmTrackingIndex].c_str(), confirmDurationMinutes);
     } else {
       lcd.setCursor(0, 2);
@@ -623,6 +624,32 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   http.end();
 }
 
+// Verifies connection status and actively runs reconnect loop across profiles if dropped
+bool ensureWiFiConnected() 
+{
+  if (WiFi.status() == WL_CONNECTED) return true;
+
+  Serial.println("\nWiFi link lost or recovering from sleep. Re-asserting...");
+  lcd.setCursor(0, 2); lcd.print("Restoring WiFi...   ");
+
+  // Quick re-init using standard autoconnect feature first
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 10) {
+    delay(300);
+    retry++;
+  }
+
+  // If autoconnect failed, manually trigger profiles sequential connection
+  if (WiFi.status() != WL_CONNECTED) {
+    bool reconnected = connectToWiFiNetwork(ssid, password, "WiFi 1");
+    if (!reconnected && ssid2 != "") {
+      reconnected = connectToWiFiNetwork(ssid2, password2, "WiFi 2");
+    }
+    return reconnected;
+  }
+  return true;
+}
+
 // Enter light sleep mode
 void enterLowPowerMode() 
 {
@@ -661,6 +688,10 @@ void enterLowPowerMode()
   
   digitalWrite(BACKLIGHT_PIN, HIGH);
   resetDisplayTimeout();
+
+  // Actively tell the WiFi stack to restore RF channels after waking up
+  WiFi.begin(); 
+
   updateDefaultDisplay();
 }
 
@@ -970,7 +1001,7 @@ void loop()
       lcd.setCursor(0, 1); lcd.print("Auto-logging task...");
       lcd.setCursor(0, 2); lcd.print(taskMapping[activeTimerIndex]);
       
-      if (WiFi.status() == WL_CONNECTED) {
+      if (ensureWiFiConnected()) {
         logTimeToJira(taskMapping[activeTimerIndex].c_str(), maxTimerHours * 60);
       } else {
         lcd.setCursor(0, 3); lcd.print("WiFi Err, Log lost!");
