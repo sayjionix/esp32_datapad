@@ -635,9 +635,15 @@ void handleDeletionInput(char key)
 // Assemble JSON payload and execute POST request to Jira REST API endpoint
 void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
-  WiFiClientSecure client; client.setInsecure(); HTTPClient http;
+  WiFiClientSecure client; 
+  client.setInsecure(); 
+  
+  HTTPClient http;
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
+  
   http.begin(client, url);
+  http.setTimeout(15000); // Erhöhe das Timeout auf 15 Sekunden gegen den -11 Fehler
+  
   http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
@@ -648,23 +654,46 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   struct tm timeinfo;
   localtime_r(&startTime, &timeinfo);
 
-  // ISO 8601 Format: YYYY-MM-DDTHH:MM:SS.000+ZZZZ
-  char timestampBuf[30];
-  // %z gets the timezone offset in the format +HHMM or -HHMM. Jira needs +HHMM.
-  strftime(timestampBuf, sizeof(timestampBuf), "%Y-%m-%dT%H:%M:%S.000%z", &timeinfo);
+  // Robustes ISO 8601 Format bauen (Jira will zwingend +HH:MM beim Offset)
+  char baseTime[25];
+  strftime(baseTime, sizeof(baseTime), "%Y-%m-%dT%H:%M:%S.000", &timeinfo);
+  
+  char tzSign = '+';
+  long tzHours = timeinfo.tm_gmtoff / 3600;
+  long tzMins = abs(timeinfo.tm_gmtoff % 3600) / 60;
+  if (timeinfo.tm_gmtoff < 0) {
+    tzSign = '-';
+    tzHours = abs(tzHours);
+  }
+
+  char timestampBuf[35];
+  sprintf(timestampBuf, "%s%c%02ld:%02ld", baseTime, tzSign, tzHours, tzMins);
 
   // Compose Payload
   String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
                        "\"started\": \"" + String(timestampBuf) + "\", "
                        "\"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
   
+  // Debug-Ausgabe auf der seriellen Konsole, um das JSON zu prüfen
+  Serial.println("[Jira POST Payload]: " + jsonPayload);
+
   int httpResponseCode = http.POST(jsonPayload);
   
   lcd.setCursor(0, 2);
   if (httpResponseCode == 201) {
     lcd.print("Time logged!        ");
+    Serial.println("[Jira POST] Erfogreich! 201 Created.");
   } else {
     lcd.print("Err HTTP:" + String(httpResponseCode));
+    Serial.print("[Jira POST] Fehler: "); 
+    Serial.println(httpResponseCode);
+    
+    // Falls der Server antwortet, aber einen Fehler wirft (z.B. 400 Bad Request),
+    // drucken wir die Fehlermeldung ins Serial Log
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println("[Jira Response]: " + response);
+    }
   }
   delay(1500); 
   http.end();
