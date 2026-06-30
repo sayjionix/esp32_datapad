@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 Preferences preferences;
-String VERSION = "v1.07";
+String VERSION = "v1.08";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -39,6 +39,11 @@ const unsigned long displayTimeout = 60000;
 bool isDisplayOn = true;
 bool displayNameToggle = true;
 bool isShowingInfoPage = false; // Flag to block UI drawing while showing version info
+
+// Variables for Task Name Inspector Feature
+bool isShowingTaskInspector = false;
+unsigned long taskInspectorStartTime = 0;
+const unsigned long taskInspectorTimeout = 2000; // 2 seconds
 
 // Keypad Definition (rows and cols are inverted here to match anti-ghosting diode polarity with library code)
 const byte ROWS = 4; 
@@ -99,6 +104,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes);
 void enterLowPowerMode();
 bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* label);
 bool ensureWiFiConnected();
+void showTaskNameMultiLine(String name);
 
 // Read battery voltage
 float readBatVoltage()
@@ -147,11 +153,35 @@ void resetDisplayTimeout()
   lastActivityTime = millis();
 }
 
+// Splits and draws a string across 4 rows on the LCD
+void showTaskNameMultiLine(String name)
+{
+  lcd.clear();
+  int startIdx = 0;
+  for (int row = 0; row < 4; row++) {
+    if (startIdx >= name.length()) break;
+    
+    String line = name.substring(startIdx, startIdx + 20);
+    
+    // Simple word wrapping helper logic if within boundary limits
+    if (startIdx + 20 < name.length() && line.lastIndexOf(' ') > 10) {
+      int lastSpace = line.lastIndexOf(' ');
+      line = line.substring(0, lastSpace);
+      startIdx += lastSpace + 1;
+    } else {
+      startIdx += 20;
+    }
+    
+    lcd.setCursor(0, row);
+    lcd.print(line);
+  }
+}
+
 // Render the current UI state to the LCD
 void updateDefaultDisplay()
 {
-  // Block redraw requests if user is reading the info page or delete dialog
-  if (isShowingInfoPage || isShowingDeleteDialog) return;
+  // Block redraw requests if user is interacting with modal sub-pages or dialogs
+  if (isShowingInfoPage || isShowingDeleteDialog || isShowingTaskInspector) return;
 
   lcd.clear();
   
@@ -804,11 +834,19 @@ void loop()
   bool isShiftPressed = false;
   bool isAPressed = false;
   bool isCancelPressed = false;
+  bool isEnterPressed = false;
   static unsigned long lastUpdateTime = 0;
+
+  // Handle non-blocking timeout for Task Name Inspector view
+  if (isShowingTaskInspector && (millis() - taskInspectorStartTime >= taskInspectorTimeout)) {
+    isShowingTaskInspector = false;
+    updateDefaultDisplay();
+  }
 
   // Automatic display timeout (except in sub-menus, editor modes, or dialogs)
   if(configIndex == -1 && manualTimeIndex == -1 && confirmTrackingIndex == -1 && 
-     !isShowingInfoPage && !isShowingDeleteDialog && (millis() - lastActivityTime > displayTimeout))
+     !isShowingInfoPage && !isShowingDeleteDialog && !isShowingTaskInspector && 
+     (millis() - lastActivityTime > displayTimeout))
   {
     enterLowPowerMode();
   }
@@ -881,10 +919,15 @@ void loop()
     else if(firstKey == 'B' && (firstState == PRESSED || firstState == HOLD)) {
       isCancelPressed = true;
     }
+    else if(firstKey == 'C' && (firstState == PRESSED || firstState == HOLD)) {
+      isEnterPressed = true;
+    }
     else {
-      // Single Key Action (No Shift, No 'A', No 'B')
+      // Single Key Action (No Shift, No 'A', No 'B', No 'C')
       int taskidx = getKeyIndex(firstKey);
       if(firstState == PRESSED && taskidx != -1) {
+        // If inspector is active, a regular press aborts it early
+        if (isShowingTaskInspector) isShowingTaskInspector = false;
         handleTracking(taskidx);
       }
     }
@@ -910,6 +953,14 @@ void loop()
           lcd.setCursor(7, 2); lcd.print(readBatVoltage(), 3);
         }
         lcd.setCursor(0, 3); lcd.print("Cancel/Enter to exit");
+        return;
+      }
+
+      // Enter ('C') + Task Key combination -> Inspector Mode (Show Multi-line Task Name)
+      if(isEnterPressed && taskidx != -1) {
+        isShowingTaskInspector = true;
+        taskInspectorStartTime = millis();
+        showTaskNameMultiLine(taskNames[taskidx]);
         return;
       }
 
@@ -980,7 +1031,8 @@ void loop()
 
   // Refresh interval tick loop for Idle Jira Matrix Grid views (4-second cycle)
   if(activeTimerIndex == -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog && ((millis() - lastUpdateTime) > 4000))
+    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog && 
+    !isShowingTaskInspector && ((millis() - lastUpdateTime) > 4000))
   {
     lastUpdateTime = millis();
     displayNameToggle = !displayNameToggle;
@@ -989,7 +1041,7 @@ void loop()
 
   // Update live counter seconds for running timer
   if(activeTimerIndex != -1 && configIndex == -1 && manualTimeIndex == -1 &&
-    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog)
+    confirmTrackingIndex == -1 && !isShowingInfoPage && !isShowingDeleteDialog && !isShowingTaskInspector)
   {
     unsigned long elapsedMillis = millis() - startTimes[activeTimerIndex];
     unsigned long maxAllowedMillis = maxTimerHours * 3600000;
