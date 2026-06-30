@@ -642,11 +642,15 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
   
   http.begin(client, url);
-  http.setTimeout(15000); // Set timeout to 15s to avoid library internal -11 connection dropouts
+  
+  // High-reliability connection configurations
+  http.setTimeout(15000);            // 15-second timeout for slow routing paths
+  http.setReuse(false);               // Force clean socket allocation per payload
   
   http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
+  http.addHeader("Connection", "close"); // Tell Jira to close connection after responding
 
   // Calculate retrospective dynamic start time (Now minus the logged minutes duration)
   time_t now = time(nullptr);
@@ -690,24 +694,38 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   // Terminal debug output trace
   Serial.println("[Jira POST Payload]: " + jsonPayload);
 
+  // Execute POST request
   int httpResponseCode = http.POST(jsonPayload);
   
   lcd.setCursor(0, 2);
   if (httpResponseCode == 201) {
     lcd.print("Time logged!        ");
     Serial.println("[Jira POST] Success! 201 Created.");
+    
+    // Discard the huge body safely to free up socket buffers instantly
+    http.writeToStream(&Serial); // Optional: Streams incoming data to Serial without allocation
   } else {
     lcd.print("Err HTTP:" + String(httpResponseCode));
     Serial.print("[Jira POST] Error code: "); 
     Serial.println(httpResponseCode);
     
-    // Output full error details to serial terminal if an HTTP level error occurs (e.g. 400 Bad Request)
+    // Only fetch response if an error occurred, but use explicit stream reading
     if (httpResponseCode > 0) {
       String response = http.getString();
-      Serial.println("[Jira Response]: " + response);
+      Serial.println("[Jira Response Error Details]: " + response);
     }
   }
+  
   delay(1500); 
+  
+  // Active socket flush and garbage collection protection
+  WiFiClient* stream = http.getStreamPtr();
+  if (stream != nullptr) {
+    while (stream->available()) {
+      stream->read(); // Flush any remaining trailing bytes out of hardware cache
+    }
+  }
+  
   http.end();
 }
 
