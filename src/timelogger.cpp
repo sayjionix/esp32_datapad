@@ -636,45 +636,58 @@ void handleDeletionInput(char key)
 void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
   WiFiClientSecure client; 
-  client.setInsecure(); 
+  client.setInsecure(); // Skip SSL certificate path checking
   
   HTTPClient http;
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
   
   http.begin(client, url);
-  http.setTimeout(15000); // Erhöhe das Timeout auf 15 Sekunden gegen den -11 Fehler
+  http.setTimeout(15000); // Set timeout to 15s to avoid library internal -11 connection dropouts
   
   http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
 
-  // Calculate task starting time
+  // Calculate retrospective dynamic start time (Now minus the logged minutes duration)
   time_t now = time(nullptr);
   time_t startTime = now - (minutes * 60);
+  
+  // Get local time parameters
   struct tm timeinfo;
   localtime_r(&startTime, &timeinfo);
 
-  // Robustes ISO 8601 Format bauen (Jira will zwingend +HH:MM beim Offset)
+  // Get UTC time parameters to manually calculate the timezone offset
+  struct tm utcinfo;
+  gmtime_r(&startTime, &utcinfo);
+
+  // Convert both broken-down times back to epochs assuming they are UTC 
+  // This safely reveals the exact local timezone offset in seconds
+  time_t localEpoch = mktime(&timeinfo);
+  time_t utcEpoch = mktime(&utcinfo);
+  long tzOffsetSeconds = localEpoch - utcEpoch;
+
+  // Generate robust ISO 8601 formatting base
   char baseTime[25];
   strftime(baseTime, sizeof(baseTime), "%Y-%m-%dT%H:%M:%S.000", &timeinfo);
   
+  // Determine timezone sign and split into hours and minutes
   char tzSign = '+';
-  long tzHours = timeinfo.tm_gmtoff / 3600;
-  long tzMins = abs(timeinfo.tm_gmtoff % 3600) / 60;
-  if (timeinfo.tm_gmtoff < 0) {
+  if (tzOffsetSeconds < 0) {
     tzSign = '-';
-    tzHours = abs(tzHours);
+    tzOffsetSeconds = -tzOffsetSeconds;
   }
+  long tzHours = tzOffsetSeconds / 3600;
+  long tzMins = (tzOffsetSeconds % 3600) / 60;
 
   char timestampBuf[35];
   sprintf(timestampBuf, "%s%c%02ld:%02ld", baseTime, tzSign, tzHours, tzMins);
 
-  // Compose Payload
+  // Assemble the explicit structural payload
   String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
                        "\"started\": \"" + String(timestampBuf) + "\", "
                        "\"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
   
-  // Debug-Ausgabe auf der seriellen Konsole, um das JSON zu prüfen
+  // Terminal debug output trace
   Serial.println("[Jira POST Payload]: " + jsonPayload);
 
   int httpResponseCode = http.POST(jsonPayload);
@@ -682,14 +695,13 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   lcd.setCursor(0, 2);
   if (httpResponseCode == 201) {
     lcd.print("Time logged!        ");
-    Serial.println("[Jira POST] Erfogreich! 201 Created.");
+    Serial.println("[Jira POST] Success! 201 Created.");
   } else {
     lcd.print("Err HTTP:" + String(httpResponseCode));
-    Serial.print("[Jira POST] Fehler: "); 
+    Serial.print("[Jira POST] Error code: "); 
     Serial.println(httpResponseCode);
     
-    // Falls der Server antwortet, aber einen Fehler wirft (z.B. 400 Bad Request),
-    // drucken wir die Fehlermeldung ins Serial Log
+    // Output full error details to serial terminal if an HTTP level error occurs (e.g. 400 Bad Request)
     if (httpResponseCode > 0) {
       String response = http.getString();
       Serial.println("[Jira Response]: " + response);
