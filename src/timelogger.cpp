@@ -8,7 +8,7 @@
 #include <time.h>
 
 Preferences preferences;
-String VERSION = "v1.09";
+String VERSION = "v1.10";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -656,36 +656,21 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   time_t now = time(nullptr);
   time_t startTime = now - (minutes * 60);
   
-  // Get local time parameters
+  // Get local time parameters (automatically factors in DST via configTzTime)
   struct tm timeinfo;
   localtime_r(&startTime, &timeinfo);
 
-  // Get UTC time parameters to manually calculate the timezone offset
-  struct tm utcinfo;
-  gmtime_r(&startTime, &utcinfo);
-
-  // Convert both broken-down times back to epochs assuming they are UTC 
-  // This safely reveals the exact local timezone offset in seconds
-  time_t localEpoch = mktime(&timeinfo);
-  time_t utcEpoch = mktime(&utcinfo);
-  long tzOffsetSeconds = localEpoch - utcEpoch;
-
-  // Generate robust ISO 8601 formatting base
+  // Buffer for the base date and time: YYYY-MM-DDTHH:MM:SS.000
   char baseTime[25];
   strftime(baseTime, sizeof(baseTime), "%Y-%m-%dT%H:%M:%S.000", &timeinfo);
   
-  // Determine timezone sign and split into hours and minutes
-  char tzSign = '+';
-  if (tzOffsetSeconds < 0) {
-    tzSign = '-';
-    tzOffsetSeconds = -tzOffsetSeconds;
-  }
-  long tzHours = tzOffsetSeconds / 3600;
-  long tzMins = (tzOffsetSeconds % 3600) / 60;
+  // Buffer for the timezone offset in Jira format: +HHMM or -HHMM
+  char tzBuf[10];
+  strftime(tzBuf, sizeof(tzBuf), "%z", &timeinfo); // %z outputs e.g. "+0200" or "+0100" natively
 
-  // REMOVED THE COLON BETWEEN %02ld AND %02ld TO MATCH JIRA'S EXPECTED "Z" (e.g., +0100)
-  char timestampBuf[35];
-  sprintf(timestampBuf, "%s%c%02ld%02ld", baseTime, tzSign, tzHours, tzMins);
+  // Combine both parts seamlessly
+  char timestampBuf[40];
+  sprintf(timestampBuf, "%s%s", baseTime, tzBuf);
 
   // Assemble the explicit structural payload
   String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
@@ -704,7 +689,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
     Serial.println("[Jira POST] Success! 201 Created.");
     
     // Discard the huge body safely to free up socket buffers instantly
-    http.writeToStream(&Serial); // Optional: Streams incoming data to Serial without allocation
+    http.writeToStream(&Serial); 
   } else {
     lcd.print("Err HTTP:" + String(httpResponseCode));
     Serial.print("[Jira POST] Error code: "); 
