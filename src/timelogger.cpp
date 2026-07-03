@@ -8,7 +8,7 @@
 #include <time.h>
 
 Preferences preferences;
-String VERSION = "v1.10";
+String VERSION = "v1.11";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -45,6 +45,9 @@ bool isShowingInfoPage = false; // Flag to block UI drawing while showing versio
 bool isShowingTaskInspector = false;
 unsigned long taskInspectorStartTime = 0;
 const unsigned long taskInspectorTimeout = 2000; // 2 seconds
+
+unsigned long lastNTPSyncTime = 0;
+const unsigned long ntpSyncInterval = 10800000; // 3 hours in milliseconds
 
 // Keypad Definition (rows and cols are inverted here to match anti-ghosting diode polarity with library code)
 const byte ROWS = 4; 
@@ -897,7 +900,8 @@ void setup()
     delay(500);
     ntpTimeout++;
   }
-  
+  lastNTPSyncTime = millis(); // Initialize the sync timer
+
   resetDisplayTimeout();
   updateDefaultDisplay();
 }
@@ -909,6 +913,15 @@ void loop()
   bool isCancelPressed = false;
   bool isEnterPressed = false;
   static unsigned long lastUpdateTime = 0;
+
+  // Automatic background NTP resynchronization every 3 hours
+  if (millis() - lastNTPSyncTime >= ntpSyncInterval) {
+    lastNTPSyncTime = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("[NTP] Triggering background time resync...");
+      configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
+    }
+  }
 
   // Handle non-blocking timeout for Task Name Inspector view
   if (isShowingTaskInspector && (millis() - taskInspectorStartTime >= taskInspectorTimeout)) {
@@ -1024,8 +1037,16 @@ void loop()
         else {
           lcd.setCursor(0, 2); lcd.print("Vbat = ");
           lcd.setCursor(7, 2); lcd.print(readBatVoltage(), 3);
+          lcd.print("V    ");
         }
-        lcd.setCursor(0, 3); lcd.print("Cancel/Enter to exit");
+        // Print initial time to line 4 immediately
+        time_t now = time(nullptr);
+        struct tm timeinfo;
+        localtime_r(&now, &timeinfo);
+        char timeBuf[21];
+        strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        lcd.setCursor(0, 3);
+        lcd.print(timeBuf);
         return;
       }
 
@@ -1110,6 +1131,21 @@ void loop()
     lastUpdateTime = millis();
     displayNameToggle = !displayNameToggle;
     updateDefaultDisplay();
+  }
+
+  // Live clock update while Info-Page is actively being displayed
+  if(isShowingInfoPage) {
+    static unsigned long lastInfoClockUpdate = 0;
+    if(millis() - lastInfoClockUpdate >= 1000) {
+      lastInfoClockUpdate = millis();
+      time_t now = time(nullptr);
+      struct tm timeinfo;
+      localtime_r(&now, &timeinfo);
+      char timeBuf[21];
+      strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+      lcd.setCursor(0, 3);
+      lcd.print(timeBuf);
+    }
   }
 
   // Update live counter seconds for running timer
