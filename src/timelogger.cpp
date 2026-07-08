@@ -8,7 +8,7 @@
 #include <time.h>
 
 Preferences preferences;
-String VERSION = "v1.11";
+String VERSION = "v1.12";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -916,10 +916,20 @@ void loop()
 
   // Automatic background NTP resynchronization every 3 hours
   if (millis() - lastNTPSyncTime >= ntpSyncInterval) {
-    lastNTPSyncTime = millis();
-    if (WiFi.status() == WL_CONNECTED) {
+    // We actively check or restore the connection before attempting the sync
+    if (ensureWiFiConnected()) {
       Serial.println("[NTP] Triggering background time resync...");
       configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
+      
+      // Only update the timestamp if the sync actually had a chance to complete
+      lastNTPSyncTime = millis();
+      
+      // Restore the UI screen view in case ensureWiFiConnected() printed status updates
+      updateDefaultDisplay();
+    } else {
+      Serial.println("[NTP] Sync deferred: WiFi not ready yet. Retrying next loop execution.");
+      // We purposefully DO NOT update lastNTPSyncTime here, so it tries again 
+      // on the next loop() pass until the network is fully available.
     }
   }
 
