@@ -8,7 +8,7 @@
 #include <time.h>
 
 Preferences preferences;
-String VERSION = "v1.12";
+String VERSION = "v1.13";
 
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
@@ -640,6 +640,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
   WiFiClientSecure client; 
   client.setInsecure(); // Skip SSL certificate path checking
+  client.setHandshakeTimeout(10);
   
   HTTPClient http;
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
@@ -647,8 +648,11 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
   http.begin(client, url);
   
   // High-reliability connection configurations
-  http.setTimeout(15000);            // 15-second timeout for slow routing paths
+  http.setTimeout(30000);            // 30-second timeout for slow routing paths
+  http.setConnectTimeout(30000);
+  http.useHTTP10(true);
   http.setReuse(false);               // Force clean socket allocation per payload
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   
   http.addHeader("Authorization", "Basic " + base64Credentials);
   http.addHeader("Content-Type", "application/json");
@@ -783,6 +787,8 @@ void enterLowPowerMode()
   digitalWrite(BACKLIGHT_PIN, HIGH);
   resetDisplayTimeout();
 
+  // static DNS server (Google DNS)
+  WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(8,8,8,8));
   // Actively tell the WiFi stack to restore RF channels after waking up
   WiFi.begin(); 
 
@@ -800,6 +806,9 @@ bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* labe
   // Clean up any ongoing connection attempt before starting a new one
   WiFi.disconnect(true);
   delay(100);
+
+  // static DNS server (Google DNS)
+  WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(8,8,8,8));
   WiFi.begin(targetSsid.c_str(), targetPass.c_str());
   
   int wifiTimeoutCounter = 0;
