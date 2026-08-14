@@ -3,8 +3,8 @@ The __Datapad Timelogger__ is an ESP32-based keypad with 20 keys, a 20x4 charact
 
 The main features are:
 * Connect the datapad with your Jira account using the REST API and a base64 token
-* Map up to 16 Jira task-IDs to the physical keys of the datapad
-* Tap a key once to start logging your time, tap again to stop logging and transfer the time to your task
+* Map up to 16 favorite Jira tasks to the physical keys of the datapad
+* Tap a key once to start logging your time, tap again to stop logging and transfer the time to Jira
 * Seamlessly switch over from logging on one task to another
 * Manually enter spent time to book to your task
 * Supports configuration of 2 WiFis to use the datapad at two locations, e.g. at home and at workplace
@@ -77,14 +77,45 @@ The On/Off switch on the top of the Datapad connects/disconnects the battery fro
 * the datapad will be powered independently of the On/Off switch, once any of the two USB-C ports is connected to a power source.
 
 ## Base configuration
-The basic configuration of the datapad is performed via a serial terminal connection to your PC. You can use the same USB-C connection that you used for programming the ESP32 board and either utilize PlatformIO's Serial Monitor feature or any other serial terminal program of your choice. The serial setting are 115200baud, 8N1. 
+The basic configuration of the datapad is performed via a serial terminal connection to your PC. You can use the same USB-C connection that you used for programming the ESP32 board and either utilize PlatformIO's Serial Monitor feature or any other serial terminal program of your choice. The serial setting are 115200baud, 8N1.
 
-If the Datapad is started the first time and there is no configuration yet, it will prompt you to connect to your PC. The firmware can not start without the basic setup.
+The basic configuration via the serial terminal includes:
+1. WiFi 1 Name (SSID)
+2. WiFi 1 Password
+3. WiFi 2 Name (SSID)
+4. WiFi 2 Password
+5. Jira-Host
+6. Base64 Credentials
+7. Max Timer Duration
+
+If the Datapad is started the first time and there is no configuration yet, it will prompt you to connect to your PC. The firmware can not start without the basic setup and having at least WiFi 1 configured and the Jira-Host and the Base64 Credentials set.
 
 You can re-enter the basic configuration again at any time by pressing and holding the _SHIFT_ key + _ENTER_ key, while turning on the datapad.
 
+Troubleshooting: If you don't see any output in the terminal, try sending anything (except a number between 1-8) to the Datapad. The firmware will reject this as an invalid choice for the main menu and re-render the main menu.
+
+### Create your base64 credentials from your Jira API Token
+A base64 representation of your Jira API token is required to access Jira's REST API. To get this, you have to perform the following steps:
+
+1. Generate an API token for Jira using your Atlassian Account. Go to your account settings -> Security -> API Token.
+2. Build a string of the form useremail:api_token.
+3. BASE64 encode the string.
+
+   Linux/Unix/MacOS:
+   ```
+   echo -n "user@example.com:api_token_string" | base64
+   ```
+
+   Windows 7 and later, using Microsoft Powershell:
+   ```
+   $Text = ‘user@example.com:api_token_string’
+   $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+   $EncodedText = [Convert]::ToBase64String($Bytes)
+   $EncodedText
+   ```
+
 ## Jira task mapping
-If the datapad starts with a valid configuration, it will show a 4x4 matrix of your 16 favorite Jira IDs on the LCD display (each Jira ID is consisting of the alphanumeric Jira key, followed by an unique number, e.g. "TSK-15"). This 4x4 matrix corresponds to the lower 4x4 segment of the physical keypad.
+If the datapad starts with a valid configuration, it will show a 4x4 matrix of your 16 favorite Jira IDs on the LCD display (each Jira ID is consisting of the alphanumeric Jira key, followed by an unique number, e.g. "MGMT-2"). This 4x4 matrix corresponds to the lower 4x4 segment of the physical keypad.
 
 If no Jira IDs have been mapped yet, each cell of the matrix will show "****".<br>
 <img src="img\lcd_empty_slots.png" alt="lcd_empty_slots" height="200">
@@ -94,7 +125,7 @@ Once Jira IDs have been mapped to the 4x4 matrix, the datapad will periodically 
 <img src="img\lcd_favorites_num.png" alt="lcd_favorites_num" height="200">
 
 ### Map a Jira task ID to a physical key
-To map a new Jira task to any of the free slots of your 4x4 matrix of favorites, simply press and hold the _SHIFT_ key and then press the key that corresponds to the slot you like to map. A dialog will show on the LCD display that prompts you for the Jira ID. The Jira ID can be entered using the T9-feature of the keypad. Each Jira ID is consisting of the alphanumeric Jira key, followed by an unique number, e.g. "TSK-15".
+To map a new Jira task to any of the free slots of your 4x4 matrix of favorites, simply press and hold the _SHIFT_ key and then press the key that corresponds to the slot you like to map. A dialog will show on the LCD display that prompts you for the Jira ID. The Jira ID can be entered using the T9-feature of the keypad. Each Jira ID is consisting of the alphanumeric Jira key, followed by an unique number, e.g. "MGMT-2".
 
 <img src="img\lcd_task_entry.png" alt="lcd_task_entry" height="200">
 
@@ -146,5 +177,6 @@ Press _CANCEL_ or _ENTER_ to return.
 **v1.0, 31.05.2026:** First fab release of PCB.
 
 # License
+The Datapad Timelogger is released under the GNU GPLv3.<br>
 Please refer to the [LICENSE](./LICENSE) file for more information.
 
