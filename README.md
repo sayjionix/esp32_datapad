@@ -1,5 +1,5 @@
-# Introduction
-The __Datapad Timelogger__ is an ESP32-based keypad with 20 keys, a 20x4 character LCD display and a provision for operating from a single 3,7V LiPo cell. While the __datapad__ hardware can generally be used for multiple purposes and provides a universal hardware development platform, the __timelogger__ firmware specifically allows logging time to [__Jira__](https://www.atlassian.com/software/jira).
+# Jira Datapad Introduction
+The __Datapad Timelogger__ is an handheld ESP32-based keypad with 20 keys, a 20x4 character LCD display and a provision for operating from a single 3,7V LiPo cell. While the __datapad__ hardware can generally be used for multiple purposes and provides a universal hardware development platform, the __timelogger__ firmware specifically allows tracking and logging time to [__Jira__](https://www.atlassian.com/software/jira).
 
 The main features are:
 * Connect the datapad with your Jira account using the REST API and a base64 token
