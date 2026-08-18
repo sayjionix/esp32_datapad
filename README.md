@@ -13,8 +13,7 @@ The main features are:
 * NTP-based time synchronization
 * Use the Datapad as a development platform for your own keypad projects
 
-<img src="img\datapad_1.png" alt="datapad_1" height="300">
-<img src="img\datapad_2.png" alt="datapad_2" height="300">
+<img src="img\datapad.png" alt="datapad">
 
 # Build Instructions
 Build your own Datapad! It's fun! :)
@@ -84,7 +83,8 @@ https://makerworld.com/de/models/132469-xda-style-keycaps-blank#profileId-143606
 After 60 seconds of inactivity, the Datapad will turn off the LCD display and backlight and it will bring the ESP32 into light sleep mode. Any running timers will keep on running in the background. To wake the Datapad up again, simply press any key on the keypad. This keypress will not trigger any action other than waking up.
 
 ## Display settings
-Use the two potentiometers to adjust display contrast and backlight intensity.<br>
+Use the two potentiometers to adjust display contrast and backlight intensity.
+
 <img src="img\potentiometers.png" alt="potentiometers" height="200">
 
 ## Battery operation
