@@ -1,3 +1,14 @@
+/**************************************************************************************************/
+/** @file      timelogger.cpp
+ *  @copyright (C) 2026, sayjionix (syjnx), All Rights Reserved
+ *             https://github.com/sayjionix/esp32_datapad
+ *  @brief     Main program file of Jira timelogger firmware for the ESP32 Datapad
+ *  @date      13.08.2026
+ */
+/**************************************************************************************************/
+
+/*** Component includes ***/
+/**************************************************************************************************/
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -7,9 +18,8 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-Preferences preferences;
-String VERSION = "v1.13";
-
+/*** Component local macro definitions ***/
+/**************************************************************************************************/
 // HD44780 LCD Pins: LiquidCrystal lcd(rs, en, d4, d5, d6, d7)
 LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 #define BACKLIGHT_PIN  4    // GPIO4
@@ -25,6 +35,17 @@ LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 
 // 5V through divider gives ~880mV at ADC, anything above 400mV means external power present
 #define PWR_PRESENT_THRESHOLD 400
+
+/*** Component local type declarations ***/
+/**************************************************************************************************/
+
+/*** Component exported data definitions ***/
+/**************************************************************************************************/
+
+/*** Component local data definitions ***/
+/**************************************************************************************************/
+Preferences preferences;
+String VERSION = "v1.14";
 
 // WiFi and Jira configuration variables
 String ssid = "";
@@ -94,6 +115,8 @@ const String t9Chars[11] = {
   "1", "ABC2", "DEF3", "GHI4", "JKL5", "MNO6", "PQRS7", "TUV8", "WXYZ9", "0", "-"
 };
 
+/*** Component local function declarations ***/
+/**************************************************************************************************/
 void resetDisplayTimeout();
 void updateDefaultDisplay();
 String readSerialLine();
@@ -639,57 +662,76 @@ void handleDeletionInput(char key)
 void logTimeToJira(const char* issueKey, unsigned long minutes)
 {
   WiFiClientSecure client; 
-  client.setInsecure(); // Skip SSL certificate path checking
-  client.setHandshakeTimeout(10);
-  
   HTTPClient http;
+  int httpResponseCode;
+  int retryCounter = 0;
   String url = "https://" + jiraHost + "/rest/api/3/issue/" + String(issueKey) + "/worklog";
-  
-  http.begin(client, url);
-  
-  // High-reliability connection configurations
-  http.setTimeout(30000);            // 30-second timeout for slow routing paths
-  http.setConnectTimeout(30000);
-  http.useHTTP10(true);
-  http.setReuse(false);               // Force clean socket allocation per payload
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  
-  http.addHeader("Authorization", "Basic " + base64Credentials);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("Accept", "application/json");
-  http.addHeader("Connection", "close"); // Tell Jira to close connection after responding
 
-  // Calculate retrospective dynamic start time (Now minus the logged minutes duration)
-  time_t now = time(nullptr);
-  time_t startTime = now - (minutes * 60);
-  
-  // Get local time parameters (automatically factors in DST via configTzTime)
-  struct tm timeinfo;
-  localtime_r(&startTime, &timeinfo);
+  do {
+    client.setInsecure(); // Skip SSL certificate path checking
+    client.setHandshakeTimeout(10);
+    
+    http.begin(client, url);
+    
+    // High-reliability connection configurations
+    http.setTimeout(30000);            // 30-second timeout for slow routing paths
+    http.setConnectTimeout(30000);
+    http.useHTTP10(true);
+    http.setReuse(false);               // Force clean socket allocation per payload
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    
+    http.addHeader("Authorization", "Basic " + base64Credentials);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Accept", "application/json");
+    http.addHeader("Connection", "close"); // Tell Jira to close connection after responding
 
-  // Buffer for the base date and time: YYYY-MM-DDTHH:MM:SS.000
-  char baseTime[25];
-  strftime(baseTime, sizeof(baseTime), "%Y-%m-%dT%H:%M:%S.000", &timeinfo);
-  
-  // Buffer for the timezone offset in Jira format: +HHMM or -HHMM
-  char tzBuf[10];
-  strftime(tzBuf, sizeof(tzBuf), "%z", &timeinfo); // %z outputs e.g. "+0200" or "+0100" natively
+    // Calculate retrospective dynamic start time (Now minus the logged minutes duration)
+    time_t now = time(nullptr);
+    time_t startTime = now - (minutes * 60);
+    
+    // Get local time parameters (automatically factors in DST via configTzTime)
+    struct tm timeinfo;
+    localtime_r(&startTime, &timeinfo);
 
-  // Combine both parts seamlessly
-  char timestampBuf[40];
-  sprintf(timestampBuf, "%s%s", baseTime, tzBuf);
+    // Buffer for the base date and time: YYYY-MM-DDTHH:MM:SS.000
+    char baseTime[25];
+    strftime(baseTime, sizeof(baseTime), "%Y-%m-%dT%H:%M:%S.000", &timeinfo);
+    
+    // Buffer for the timezone offset in Jira format: +HHMM or -HHMM
+    char tzBuf[10];
+    strftime(tzBuf, sizeof(tzBuf), "%z", &timeinfo); // %z outputs e.g. "+0200" or "+0100" natively
 
-  // Assemble the explicit structural payload
-  String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
-                       "\"started\": \"" + String(timestampBuf) + "\", "
-                       "\"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
-  
-  // Terminal debug output trace
-  Serial.println("[Jira POST Payload]: " + jsonPayload);
+    // Combine both parts seamlessly
+    char timestampBuf[40];
+    sprintf(timestampBuf, "%s%s", baseTime, tzBuf);
 
-  // Execute POST request
-  int httpResponseCode = http.POST(jsonPayload);
-  
+    // Assemble the explicit structural payload
+    String jsonPayload = "{\"timeSpent\": \"" + String(minutes) + "m\", "
+                        "\"started\": \"" + String(timestampBuf) + "\", "
+                        "\"comment\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"text\": \"Logged via ESP32 Datapad.\", \"type\": \"text\"}]}]}}";
+    
+    // Terminal debug output trace
+    Serial.println("[Jira POST Payload]: " + jsonPayload);
+
+    // Execute POST request
+    httpResponseCode = http.POST(jsonPayload);
+
+    delay(1000); 
+    
+    // Active socket flush and garbage collection protection
+    WiFiClient* stream = http.getStreamPtr();
+    if (stream != nullptr) {
+      while (stream->available()) {
+        stream->read(); // Flush any remaining trailing bytes out of hardware cache
+      }
+    }    
+    http.end();
+
+    lcd.setCursor(retryCounter, 2);
+    lcd.print(".");
+    retryCounter++;
+  } while((httpResponseCode != 201) && retryCounter < 6);
+
   lcd.setCursor(0, 2);
   if (httpResponseCode == 201) {
     lcd.print("Time logged!        ");
@@ -708,18 +750,7 @@ void logTimeToJira(const char* issueKey, unsigned long minutes)
       Serial.println("[Jira Response Error Details]: " + response);
     }
   }
-  
   delay(1500); 
-  
-  // Active socket flush and garbage collection protection
-  WiFiClient* stream = http.getStreamPtr();
-  if (stream != nullptr) {
-    while (stream->available()) {
-      stream->read(); // Flush any remaining trailing bytes out of hardware cache
-    }
-  }
-  
-  http.end();
 }
 
 // Verifies connection status and actively runs reconnect loop across profiles if dropped
@@ -787,8 +818,6 @@ void enterLowPowerMode()
   digitalWrite(BACKLIGHT_PIN, HIGH);
   resetDisplayTimeout();
 
-  // static DNS server (Google DNS)
-  WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(8,8,8,8));
   // Actively tell the WiFi stack to restore RF channels after waking up
   WiFi.begin(); 
 
@@ -806,9 +835,6 @@ bool connectToWiFiNetwork(String targetSsid, String targetPass, const char* labe
   // Clean up any ongoing connection attempt before starting a new one
   WiFi.disconnect(true);
   delay(100);
-
-  // static DNS server (Google DNS)
-  WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(8,8,8,8));
   WiFi.begin(targetSsid.c_str(), targetPass.c_str());
   
   int wifiTimeoutCounter = 0;
