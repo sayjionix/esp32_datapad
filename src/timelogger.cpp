@@ -45,7 +45,7 @@ LiquidCrystal lcd(9, 46, 8, 16, 15, 7);
 /*** Component local data definitions ***/
 /**************************************************************************************************/
 Preferences preferences;
-String VERSION = "v1.14";
+String VERSION = "v1.15";
 
 // WiFi and Jira configuration variables
 String ssid = "";
@@ -236,15 +236,12 @@ void updateDefaultDisplay()
         // Toggle between Project Key and Issue Number display
         if(displayNameToggle) {
           displayName = displayName.substring(0, dashidx);
-          if (displayName.length() > 4) {
-            displayName = displayName.substring(0, 4);
-          }
         }
         else {
-          displayName = displayName.substring(dashidx+1, 10);
-          if (displayName.length() > 4) {
-            displayName = displayName.substring(dashidx+1, dashidx+5);
-          }
+          displayName = displayName.substring(dashidx+1, dashidx+7);
+        }
+        if (displayName.length() > 4) {
+          displayName = displayName.substring(0, 4);
         }
         lcd.print(displayName);
       }

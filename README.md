@@ -109,6 +109,8 @@ If the Datapad is started the first time and there is no configuration yet, it w
 
 You can re-enter the basic configuration again at any time by pressing and holding the _SHIFT_ key + _ENTER_ key, while turning on the Datapad.
 
+<img src="img\lcd_setup_mode.png" alt="lcd_setup_mode" height="200">
+
 Troubleshooting: If you don't see any output in the terminal, try sending anything (except a number between 1-8) to the Datapad. The firmware will reject this as an invalid choice for the main menu and re-render the main menu.
 
 ### Create your base64 credentials from your Jira API Token
@@ -130,6 +132,7 @@ A base64 representation of your Jira API token is required to access Jira's REST
    $EncodedText = [Convert]::ToBase64String($Bytes)
    $EncodedText
    ```
+4. Make sure that your resulting base64 string doesn't contain any unwanted carriage returns or other whitespace characters when you copy them to your Datapad configuration via the terminal. Unwanted whitespace characters are a common reason why the Jira login does not work later on. It can be easily checked by pasting the resulting base64 string into a text editor that can show whitespace characters, such as notepad++.
 
 ## Jira task mapping
 If the Datapad starts with a valid configuration, it will show a 4x4 matrix of your 16 favorite Jira IDs on the LCD display (each Jira ID is consisting of the alphanumeric Jira key, followed by an unique number, e.g. "MGMT-2"). This 4x4 matrix corresponds to the lower 4x4 segment of the physical keypad.
